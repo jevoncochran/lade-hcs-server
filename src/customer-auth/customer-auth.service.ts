@@ -16,7 +16,7 @@ import {
   hashPassword,
   verifyPassword,
 } from '../auth/password.js';
-import type { RequestMeta } from '../auth/request-meta.js';
+import type { RequestMeta } from '../common/decorators/req-meta.decorator.js';
 import { hashToken, newToken } from '../auth/tokens.js';
 import type { Env } from '../config/env.validation.js';
 import { BlindIndex } from '../crypto/blind-index.js';
@@ -32,7 +32,7 @@ import {
   CustomerSessionService,
   type SessionCustomer,
 } from './customer-session.service.js';
-import type { SignupDto } from './dto.js';
+import type { SignupDto } from './dto/signup.dto.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const TOKEN_TTL_MS: Record<CustomerTokenType, number> = {

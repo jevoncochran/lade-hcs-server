@@ -16,6 +16,15 @@ Booking API for Lade Health Care Services (non-emergency medical transport, Tamp
 
 ## Conventions
 
+Project layout follows the Nest 12 CLI (`npx nest g … --dry-run` shows what it would generate):
+
+- One folder per feature: `name.module.ts`, `name.controller.ts`, `name.service.ts`, one DTO per file in `dto/name.dto.ts`, guards in `*.guard.ts`, param decorators in `*.decorator.ts`, unit tests beside the code as `*.spec.ts`.
+- `src/common/`: app-wide pieces not owned by one feature (`guards/`, `decorators/`, `dto/`, `transforms.ts`).
+- `src/auth/`: plain helpers shared by the customer and staff auth modules (passwords, tokens, lockout, session cookies). Not a Nest module.
+- `src/config/`: env validation and config factories (e.g. `rate-limit.config.ts`).
+- Swappable outside services (email, mileage) are an abstract class used as the injection token plus one class per implementation (see `src/mail/mailer.ts`).
+- DTO validation uses class-validator (Nest 12 also supports Zod; we stay with class-validator for consistency).
+
 - NestJS 12, ES modules: relative imports end in `.js` (`./foo.service.js`).
 - Non-class functions use arrow syntax (`const bootstrap = async () => {}`), matching the website repo. Nest classes, decorators and class methods stay as they are.
 - Comments explain *why*, briefly. Prettier: single quotes, trailing commas.

@@ -11,15 +11,21 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import { AuthRateLimit } from '../auth/rate-limit.js';
-import { ReqMeta, type RequestMeta } from '../auth/request-meta.js';
+import { AuthRateLimit } from '../common/decorators/auth-rate-limit.decorator.js';
+import {
+  ReqMeta,
+  type RequestMeta,
+} from '../common/decorators/req-meta.decorator.js';
 import {
   sessionCookieOptions,
   STAFF_SESSION_COOKIE,
 } from '../auth/session-cookie.js';
 import type { Env } from '../config/env.validation.js';
-import { CompleteInviteDto, InviteTokenDto, StaffLoginDto } from './dto.js';
-import { CurrentStaff, StaffAuthGuard } from './staff-auth.guard.js';
+import { CompleteInviteDto } from './dto/complete-invite.dto.js';
+import { InviteTokenDto } from './dto/invite-token.dto.js';
+import { StaffLoginDto } from './dto/staff-login.dto.js';
+import { CurrentStaff } from './current-staff.decorator.js';
+import { StaffAuthGuard } from './staff-auth.guard.js';
 import { StaffAuthService } from './staff-auth.service.js';
 import { StaffInviteService } from './staff-invite.service.js';
 import type { SessionStaff } from './staff-session.service.js';

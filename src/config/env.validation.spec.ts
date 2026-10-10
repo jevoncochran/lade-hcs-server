@@ -95,6 +95,19 @@ describe('validateEnv', () => {
     expect(() => validateEnv(withoutKeys)).toThrow(/ENCRYPTION_KEYS/);
   });
 
+  it('refuses development stand-ins in production', () => {
+    expect(() => validateEnv({ ...required, NODE_ENV: 'production' })).toThrow(
+      /MAIL_TRANSPORT "log"[\s\S]*MILEAGE_PROVIDER "estimate"/,
+    );
+  });
+
+  it('allows the stand-ins outside production', () => {
+    expect(() =>
+      validateEnv({ ...required, NODE_ENV: 'development' }),
+    ).not.toThrow();
+    expect(() => validateEnv({ ...required, NODE_ENV: 'test' })).not.toThrow();
+  });
+
   it('never echoes secret values in errors', () => {
     const badUrl = 'mysql://admin:hunter2@db.example.com/lade';
     const error = (() => {

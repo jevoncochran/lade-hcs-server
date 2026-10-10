@@ -11,26 +11,28 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import type { Request, Response } from 'express';
-import { AuthRateLimit } from '../auth/rate-limit.js';
-import { ReqMeta, type RequestMeta } from '../auth/request-meta.js';
+import { AuthRateLimit } from '../common/decorators/auth-rate-limit.decorator.js';
+import {
+  ReqMeta,
+  type RequestMeta,
+} from '../common/decorators/req-meta.decorator.js';
 import {
   CUSTOMER_SESSION_COOKIE,
   sessionCookieOptions,
 } from '../auth/session-cookie.js';
 import type { Env } from '../config/env.validation.js';
-import { CurrentCustomer, CustomerAuthGuard } from './customer-auth.guard.js';
+import { CurrentCustomer } from './current-customer.decorator.js';
+import { CustomerAuthGuard } from './customer-auth.guard.js';
 import { CustomerAuthService } from './customer-auth.service.js';
 import {
   CUSTOMER_ABSOLUTE_MS,
   type SessionCustomer,
 } from './customer-session.service.js';
-import {
-  EmailDto,
-  LoginDto,
-  ResetPasswordDto,
-  SignupDto,
-  TokenDto,
-} from './dto.js';
+import { EmailDto } from './dto/email.dto.js';
+import { LoginDto } from './dto/login.dto.js';
+import { ResetPasswordDto } from './dto/reset-password.dto.js';
+import { SignupDto } from './dto/signup.dto.js';
+import { TokenDto } from './dto/token.dto.js';
 
 @Controller('auth')
 export class CustomerAuthController {

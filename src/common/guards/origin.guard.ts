@@ -1,20 +1,14 @@
 import {
   ForbiddenException,
   Injectable,
-  SetMetadata,
   type CanActivate,
   type ExecutionContext,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Reflector } from '@nestjs/core';
 import type { Request } from 'express';
-import type { Env } from '../config/env.validation.js';
-
-const SKIP_ORIGIN_CHECK = 'skipOriginCheck';
-
-// For endpoints called server-to-server rather than by the website, such as
-// Stripe webhooks (which verify their own signature instead).
-export const SkipOriginCheck = () => SetMetadata(SKIP_ORIGIN_CHECK, true);
+import type { Env } from '../../config/env.validation.js';
+import { SKIP_ORIGIN_CHECK } from '../decorators/skip-origin-check.decorator.js';
 
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 

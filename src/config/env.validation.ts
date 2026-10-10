@@ -63,6 +63,11 @@ export class Env {
   @IsIn(['log'])
   MAIL_TRANSPORT = 'log';
 
+  // "estimate" makes up consistent distances (development and tests only).
+  // AWS Location Service is added before launch.
+  @IsIn(['estimate'])
+  MILEAGE_PROVIDER = 'estimate';
+
   // Requests per minute per IP to each login / sign-up / reset endpoint.
   @Type(() => Number)
   @IsInt()
@@ -170,6 +175,20 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
     messages.push(
       ...checkCryptoSettings(env).map((problem) => `  - ${problem}`),
     );
+  }
+
+  // Stand-ins that would silently mislead real customers: never in production.
+  if (env.NODE_ENV === NodeEnv.Production) {
+    if (env.MAIL_TRANSPORT === 'log') {
+      messages.push(
+        '  - MAIL_TRANSPORT "log" only prints emails; production must send them',
+      );
+    }
+    if (env.MILEAGE_PROVIDER === 'estimate') {
+      messages.push(
+        '  - MILEAGE_PROVIDER "estimate" makes up distances; production needs real ones',
+      );
+    }
   }
 
   if (messages.length > 0) {

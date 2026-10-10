@@ -6,7 +6,7 @@ import {
   isLocked,
 } from '../auth/lockout.js';
 import { burnPasswordCheck, verifyPassword } from '../auth/password.js';
-import type { RequestMeta } from '../auth/request-meta.js';
+import type { RequestMeta } from '../common/decorators/req-meta.decorator.js';
 import { ActorType } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {

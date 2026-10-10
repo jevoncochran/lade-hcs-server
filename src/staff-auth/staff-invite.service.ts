@@ -6,7 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service.js';
 import { hashPassword } from '../auth/password.js';
-import type { RequestMeta } from '../auth/request-meta.js';
+import type { RequestMeta } from '../common/decorators/req-meta.decorator.js';
 import { hashToken, newToken } from '../auth/tokens.js';
 import type { Env } from '../config/env.validation.js';
 import { ActorType, Prisma, StaffRole } from '../generated/prisma/client.js';

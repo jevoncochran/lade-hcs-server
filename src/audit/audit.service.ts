@@ -1,5 +1,5 @@
 import { Injectable } from '@nestjs/common';
-import type { RequestMeta } from '../auth/request-meta.js';
+import type { RequestMeta } from '../common/decorators/req-meta.decorator.js';
 import type { ActorType, Prisma } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 

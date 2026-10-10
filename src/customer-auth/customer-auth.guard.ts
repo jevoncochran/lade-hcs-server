@@ -1,5 +1,4 @@
 import {
-  createParamDecorator,
   Injectable,
   UnauthorizedException,
   type CanActivate,
@@ -12,9 +11,10 @@ import {
   type SessionCustomer,
 } from './customer-session.service.js';
 
-type CustomerRequest = Request & { customer?: SessionCustomer };
+export type CustomerRequest = Request & { customer?: SessionCustomer };
 
-// Requires a signed-in customer (session cookie). Use with @CurrentCustomer().
+// Requires a signed-in customer (session cookie). Read them with
+// @CurrentCustomer().
 @Injectable()
 export class CustomerAuthGuard implements CanActivate {
   constructor(private readonly sessions: CustomerSessionService) {}
@@ -32,8 +32,3 @@ export class CustomerAuthGuard implements CanActivate {
     return true;
   }
 }
-
-export const CurrentCustomer = createParamDecorator(
-  (_data: unknown, context: ExecutionContext) =>
-    context.switchToHttp().getRequest<CustomerRequest>().customer!,
-);

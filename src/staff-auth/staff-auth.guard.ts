@@ -1,5 +1,4 @@
 import {
-  createParamDecorator,
   Injectable,
   UnauthorizedException,
   type CanActivate,
@@ -12,9 +11,9 @@ import {
   type SessionStaff,
 } from './staff-session.service.js';
 
-type StaffRequest = Request & { staff?: SessionStaff };
+export type StaffRequest = Request & { staff?: SessionStaff };
 
-// Requires a signed-in staff member (staff session cookie). Use with
+// Requires a signed-in staff member (staff session cookie). Read them with
 // @CurrentStaff(). Role checks come with the admin endpoints.
 @Injectable()
 export class StaffAuthGuard implements CanActivate {
@@ -31,8 +30,3 @@ export class StaffAuthGuard implements CanActivate {
     return true;
   }
 }
-
-export const CurrentStaff = createParamDecorator(
-  (_data: unknown, context: ExecutionContext) =>
-    context.switchToHttp().getRequest<StaffRequest>().staff!,
-);
