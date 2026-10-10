@@ -1,6 +1,7 @@
 import { plainToInstance, Type } from 'class-transformer';
 import {
   IsEnum,
+  IsIn,
   IsInt,
   IsString,
   IsUrl,
@@ -42,9 +43,31 @@ export class Env {
   })
   DATABASE_URL: string;
 
-  // The Lade website's origin, the only browser origin allowed to call the API.
+  // The Lade website's origin, e.g. https://ladehealthcare.com. The only
+  // browser origin allowed to call the API, and the base for links in emails.
   @IsUrl({ require_tld: false, require_protocol: true })
-  CORS_ORIGIN: string;
+  @Matches(/^[^/]+\/\/[^/]+$/, {
+    message: 'SITE_URL must be an origin with no path or trailing slash',
+  })
+  SITE_URL: string;
+
+  // ---------- Accounts ----------
+
+  // Version of the terms of service / privacy notice customers accept at
+  // sign-up and checkout. Bump it when the documents change.
+  @IsString()
+  TERMS_VERSION = '2026-10-draft';
+
+  // "log" prints emails to the server log (development and tests only).
+  // Amazon SES is added before launch.
+  @IsIn(['log'])
+  MAIL_TRANSPORT = 'log';
+
+  // Requests per minute per IP to each login / sign-up / reset endpoint.
+  @Type(() => Number)
+  @IsInt()
+  @Min(1)
+  AUTH_RATE_LIMIT_PER_MINUTE = 10;
 
   // ---------- PHI encryption (see src/crypto/keys.ts) ----------
   // Generate local values with `npm run keys:generate`.

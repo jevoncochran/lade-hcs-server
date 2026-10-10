@@ -20,7 +20,7 @@ Later: 4. notifications (beyond the minimal alerts below), 5. recurring rides, 6
 - **Secrets / keys:** Google Secret Manager + Cloud KMS.
 - **Mileage:** AWS Location Service (route calculation) in a small separate AWS account with the AWS BAA (free) accepted. Pay per request.
 - **Payments:** Stripe (SetupIntent + off-session PaymentIntent).
-- **Email:** PHI-free messages only (see Notifications), so any provider works; start on a free tier (e.g. Resend).
+- **Email:** Amazon SES under the AWS BAA (customer email addresses are PHI). Development prints emails to the log (`MAIL_TRANSPORT=log`); the SES mailer is built before launch.
 - **Domains:** API on a subdomain of the site's domain (e.g. `api.ladehealthcare.com`) so staff auth cookies work.
 - **Estimated cost at launch:** ~$15–30/month. Upgrade path: bigger Cloud SQL tier (no SLA on the smallest), Cloud Run min-instances=1 to avoid cold starts, HA database later.
 
@@ -54,7 +54,10 @@ Public online bookings use the partner rates for now (`PriceChannel.PUBLIC`).
 
 Rules:
 
-- Round trip mileage = total billable passenger miles for both legs.
+- Round trip and wait-and-return use the round-trip base fare; mileage = total billable passenger miles for both legs.
+- Billable miles round **up** to the next tenth of a mile (10.01 mi → 10.1 mi); mileage is rounded to the cent.
+- The quote at booking is base fare + mileage. Waiting time is added after the ride.
+- Engine: `src/pricing/pricing.ts` (pure, fully unit-tested); `PricingService` picks the rule in effect (newest started, not ended).
 - **Wait time:** $15 per 15 minutes after a 15-minute grace period; partial increments round up to a full 15 minutes.
 - No charge for companions/escorts. No after-hours or holiday surcharge. Service is 24/7 including holidays.
 - **No-show:** rider not present at pickup. Can only be marked after the 15-minute grace period. Fee = one-way base fare. The return leg is cancelled free.
@@ -102,21 +105,34 @@ Rules:
 
 Every transition writes a `BookingEvent` and an `AuditLog` entry.
 
-## Customer booking management (no accounts)
+## Customer accounts
 
-- Confirmation email contains a "Manage your ride" link with a random token (stored hashed), expiring 7 days after the last leg.
-- Page shows reference, status, times, care level, price, partially masked addresses.
-- Customer can cancel online (late-cancel fee shown before confirming). Rescheduling is by phone in v1.
-- Lost link: enter reference + email → link re-sent to the email on file. Rate limited; response never reveals whether a booking exists.
+Customers must create an account to book (decided 2026-10-09). Guest booking may be added later; `Booking.customerId` is optional for that reason.
+
+- Sign-up: first name, last name, email, phone, password (8+ chars, argon2id), terms acceptance (`TERMS_VERSION`). Email must be verified (24h link) before booking.
+- Responses never reveal whether an email has an account (sign-up, resend, forgot password).
+- Login: email + password; 5 failures → 15-minute lock. MFA optional for customers (not built yet).
+- Sessions: server-side, httpOnly `lade_sid` cookie; end after 7 days idle or 30 days.
+- Password reset: 1-hour one-time link; signs out every session.
+- Email, first name, last name and phone are encrypted (being a Lade customer is PHI); lookup via `emailHash`.
+- Endpoints: `POST /auth/signup`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/login`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password`; `GET /auth/me`.
+- The "manage your ride" link for guests (`Booking.manageToken*`) waits until guest booking is built.
 
 ## Staff auth
 
-- Email + password (min 12 chars, argon2id) + required TOTP MFA.
-- 15-minute access tokens with sliding refresh; 15-minute idle logout. Tokens in httpOnly cookies.
-- 5 failed logins → 15-minute lockout. All attempts audited.
-- First admin created by a CLI seed script. Further staff invited by an admin via a one-time 48-hour link (set password + MFA).
-- Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections.
+- Accounts are only created by accepting an invite (48h, one-time link). The first ones come from the bootstrap command: `npm run staff:invite -- --email <email> --role ADMIN`. Later, admins invite from `/admin`.
+- Accepting: get an authenticator QR code, then set name + password and confirm a 6-digit code. Nobody else ever knows the password or MFA secret.
+- Login: email + password + TOTP code (required). Used codes can't be replayed. 5 failures → 15-minute lock.
+- Sessions: server-side, httpOnly `lade_staff_sid` cookie (separate from customers); end after 15 minutes idle (HIPAA automatic logoff), 12 hours, or when the account is deactivated.
+- Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections. Initial admins: Jevon and the two owners.
+- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
 - Admin screens live at `/admin` in the Next.js site, never cached, `noindex`.
+
+## Request security
+
+- Every state-changing request must carry `Origin: SITE_URL` (CSRF protection), except endpoints marked `@SkipOriginCheck()` such as future Stripe webhooks.
+- Rate limits per IP: 300/min overall, `AUTH_RATE_LIMIT_PER_MINUTE` (10) per auth endpoint. In memory per instance.
+- Every login, failed login, sign-up, verification, reset and invite is in the audit log, with no PHI.
 
 ## Notifications (phases 1–3)
 

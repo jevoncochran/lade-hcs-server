@@ -98,9 +98,15 @@ enum StaffRole {
 }
 
 enum ActorType {
-  PUBLIC
+  PUBLIC // anonymous website visitor
+  CUSTOMER
   STAFF
   SYSTEM
+}
+
+enum CustomerTokenType {
+  EMAIL_VERIFICATION
+  PASSWORD_RESET
 }
 
 // ---------- Bookings ----------
@@ -110,6 +116,10 @@ model Booking {
   reference      String        @unique // short code for phone calls, e.g. "LD-7K3Q9"
   status         BookingStatus @default(PENDING_PAYMENT)
   idempotencyKey String        @unique // stops double bookings on resubmit
+
+  // Account that made the booking. Optional so guest booking can be added later.
+  customerId String?   @db.Uuid
+  customer   Customer? @relation(fields: [customerId], references: [id])
 
   careLevel      CareLevel
   tripType       TripType
@@ -160,6 +170,7 @@ model Booking {
   deletedAt DateTime? @db.Timestamptz(6) // soft delete; purged by retention job
 
   @@index([status])
+  @@index([customerId])
   @@index([requesterEmailHash])
   @@index([requesterPhoneHash])
   @@index([riderNameHash])
@@ -280,6 +291,68 @@ model PricingRule {
   @@index([channel, careLevel, effectiveFrom])
 }
 
+// ---------- Customers ----------
+// Being a customer of a medical transport company is itself PHI, so contact
+// details are encrypted. Login looks customers up by emailHash.
+
+model Customer {
+  id               String    @id @default(uuid()) @db.Uuid
+  email            String /// @encrypted
+  emailHash        String?   @unique
+  emailVerifiedAt  DateTime? @db.Timestamptz(6) // required before booking
+  firstName        String /// @encrypted
+  lastName         String /// @encrypted
+  phone            String /// @encrypted
+  phoneHash        String?
+  passwordHash     String // argon2id
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime? @db.Timestamptz(6)
+  lastLoginAt      DateTime? @db.Timestamptz(6)
+  termsVersion     String
+  termsAcceptedAt  DateTime  @db.Timestamptz(6)
+  stripeCustomerId String?   @unique
+
+  bookings  Booking[]
+  sessions  CustomerSession[]
+  tokens    CustomerToken[]
+  auditLogs AuditLog[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6)
+
+  @@index([phoneHash])
+}
+
+// Server-side session behind the customer's session cookie. Only a hash of
+// the cookie value is stored.
+model CustomerSession {
+  id         String    @id @default(uuid()) @db.Uuid
+  customerId String    @db.Uuid
+  customer   Customer  @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique
+  lastSeenAt DateTime  @default(now()) @db.Timestamptz(6) // idle timeout
+  expiresAt  DateTime  @db.Timestamptz(6) // absolute limit
+  revokedAt  DateTime? @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([customerId])
+}
+
+// One-time links: email verification (24h) and password reset (1h).
+model CustomerToken {
+  id         String            @id @default(uuid()) @db.Uuid
+  customerId String            @db.Uuid
+  customer   Customer          @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  type       CustomerTokenType
+  tokenHash  String            @unique
+  expiresAt  DateTime          @db.Timestamptz(6)
+  usedAt     DateTime?         @db.Timestamptz(6)
+  createdAt  DateTime          @default(now()) @db.Timestamptz(6)
+
+  @@index([customerId, type])
+}
+
 // ---------- Staff & auth ----------
 
 model StaffUser {
@@ -289,12 +362,13 @@ model StaffUser {
   passwordHash     String // argon2id
   role             StaffRole @default(DISPATCHER)
   isActive         Boolean   @default(true)
-  mfaSecret        String? /// @encrypted  TOTP secret
+  mfaSecret        String? /// @encrypted  TOTP secret (set when the invite is accepted)
+  mfaLastTimeStep  Int? // last accepted TOTP step, so a code can't be reused
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime? @db.Timestamptz(6)
   lastLoginAt      DateTime? @db.Timestamptz(6)
 
-  refreshTokens  RefreshToken[]
+  sessions       StaffSession[]
   bookingEvents  BookingEvent[]
   bookingCharges BookingCharge[]
   auditLogs      AuditLog[]
@@ -304,12 +378,15 @@ model StaffUser {
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
 }
 
-model RefreshToken {
+// Server-side session behind the staff session cookie. Only a hash of the
+// cookie value is stored. Staff sessions end after 15 minutes idle.
+model StaffSession {
   id          String    @id @default(uuid()) @db.Uuid
   staffUserId String    @db.Uuid
   staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
   tokenHash   String    @unique
-  expiresAt   DateTime  @db.Timestamptz(6)
+  lastSeenAt  DateTime  @default(now()) @db.Timestamptz(6) // idle timeout
+  expiresAt   DateTime  @db.Timestamptz(6) // absolute limit
   revokedAt   DateTime? @db.Timestamptz(6)
   createdAt   DateTime  @default(now()) @db.Timestamptz(6)
 
@@ -318,16 +395,17 @@ model RefreshToken {
 
 // One-time 48-hour link for a new staff member to set a password and MFA.
 model StaffInvite {
-  id          String    @id @default(uuid()) @db.Uuid
+  id          String     @id @default(uuid()) @db.Uuid
   email       String
-  role        StaffRole @default(DISPATCHER)
-  tokenHash   String    @unique
-  expiresAt   DateTime  @db.Timestamptz(6)
-  acceptedAt  DateTime? @db.Timestamptz(6)
-  revokedAt   DateTime? @db.Timestamptz(6)
-  invitedById String    @db.Uuid
-  invitedBy   StaffUser @relation(fields: [invitedById], references: [id])
-  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+  role        StaffRole  @default(DISPATCHER)
+  tokenHash   String     @unique
+  expiresAt   DateTime   @db.Timestamptz(6)
+  acceptedAt  DateTime?  @db.Timestamptz(6)
+  revokedAt   DateTime?  @db.Timestamptz(6)
+  mfaSecret   String? /// @encrypted  generated while accepting, before the account exists
+  invitedById String?    @db.Uuid // null when created by the bootstrap script
+  invitedBy   StaffUser? @relation(fields: [invitedById], references: [id])
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
 
   @@index([email])
 }
@@ -339,7 +417,11 @@ model AuditLog {
   id          String     @id @default(uuid()) @db.Uuid
   actorType   ActorType
   staffUserId String?    @db.Uuid
-  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id])
+  // Restrict: a person with audit history can't be hard-deleted (soft delete
+  // instead), so entries never lose who did them.
+  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id], onDelete: Restrict)
+  customerId  String?    @db.Uuid
+  customer    Customer?  @relation(fields: [customerId], references: [id], onDelete: Restrict)
   action      String // "booking.view", "booking.update", "auth.login_failed", ...
   entityType  String?
   entityId    String?
@@ -350,4 +432,5 @@ model AuditLog {
 
   @@index([entityType, entityId])
   @@index([staffUserId, createdAt])
+  @@index([customerId, createdAt])
 }

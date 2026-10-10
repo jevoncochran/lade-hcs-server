@@ -11,6 +11,7 @@ Booking API for Lade Health Care Services (non-emergency medical transport, Tamp
   - Never put PHI in logs, error messages, emails, Stripe metadata or API error responses.
   - Search encrypted fields via their `*Hash` column and `BlindIndex.hash()`; filtering or sorting on an encrypted field throws.
   - Tests and local dev use fake data only.
+- Auth: customers and staff have separate sessions, cookies and guards (`CustomerAuthGuard` / `StaffAuthGuard`). Auth endpoints get `@AuthRateLimit()`. Responses must never reveal whether an email has an account. State-changing requests need the site's `Origin` (OriginGuard).
 - Read settings through `ConfigService<Env, true>`, never `process.env`. New setting → add it to `src/config/env.validation.ts` and `.env.example`. Secret settings go in `SECRET_SETTINGS` so their values are never echoed.
 
 ## Conventions
@@ -33,6 +34,7 @@ npm run db:migrate       # create/apply a migration on the dev database
 npm run db:generate      # regenerate the Prisma client (src/generated, not committed)
 npm run db:seed          # starting pricing rules (safe to re-run)
 npm run keys:generate    # fresh local encryption keys for .env / .env.test
+npm run staff:invite -- --email <email> --role ADMIN   # bootstrap a staff invite link
 ```
 
 After changing `prisma/schema.prisma`: `npm run db:migrate`, `npm run db:generate`, `npm run test:db:prepare`.

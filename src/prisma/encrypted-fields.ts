@@ -19,7 +19,9 @@ export const ENCRYPTED_FIELDS: Partial<Record<ModelName, readonly string[]>> = {
   TripLeg: ['pickupAddress', 'dropoffAddress'],
   BookingCharge: ['note'],
   BookingEvent: ['note'],
+  Customer: ['email', 'firstName', 'lastName', 'phone'],
   StaffUser: ['mfaSecret'],
+  StaffInvite: ['mfaSecret'],
 };
 
 // Search hashes the encryption extension derives from a plaintext field
@@ -32,6 +34,10 @@ export const BLIND_INDEXES: Partial<
     requesterPhoneHash: { source: 'requesterPhone', kind: 'phone' },
     riderNameHash: { source: 'riderName', kind: 'name' },
   },
+  Customer: {
+    emailHash: { source: 'email', kind: 'email' },
+    phoneHash: { source: 'phone', kind: 'phone' },
+  },
 };
 
 // Every relation field and the model it points to, so nested writes and
@@ -39,6 +45,7 @@ export const BLIND_INDEXES: Partial<
 // Must list every relation in the schema; encrypted-fields.spec.ts checks it.
 export const RELATIONS: Record<ModelName, Record<string, ModelName>> = {
   Booking: {
+    customer: 'Customer',
     pricingRule: 'PricingRule',
     legs: 'TripLeg',
     charges: 'BookingCharge',
@@ -51,14 +58,22 @@ export const RELATIONS: Record<ModelName, Record<string, ModelName>> = {
   Payment: { booking: 'Booking' },
   StripeEvent: {},
   PricingRule: { bookings: 'Booking' },
+  Customer: {
+    bookings: 'Booking',
+    sessions: 'CustomerSession',
+    tokens: 'CustomerToken',
+    auditLogs: 'AuditLog',
+  },
+  CustomerSession: { customer: 'Customer' },
+  CustomerToken: { customer: 'Customer' },
   StaffUser: {
-    refreshTokens: 'RefreshToken',
+    sessions: 'StaffSession',
     bookingEvents: 'BookingEvent',
     bookingCharges: 'BookingCharge',
     auditLogs: 'AuditLog',
     sentInvites: 'StaffInvite',
   },
-  RefreshToken: { staffUser: 'StaffUser' },
+  StaffSession: { staffUser: 'StaffUser' },
   StaffInvite: { invitedBy: 'StaffUser' },
-  AuditLog: { staffUser: 'StaffUser' },
+  AuditLog: { staffUser: 'StaffUser', customer: 'Customer' },
 };

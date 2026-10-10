@@ -5,7 +5,7 @@ const key = () => randomBytes(32).toString('base64');
 
 const required = {
   DATABASE_URL: 'postgresql://lade@localhost:5432/lade_hcs_test',
-  CORS_ORIGIN: 'http://localhost:3000',
+  SITE_URL: 'http://localhost:3000',
   ENCRYPTION_KEYS: `k1:${key()}`,
   ENCRYPTION_ACTIVE_KEY_ID: 'k1',
   BLIND_INDEX_KEY: key(),
@@ -44,7 +44,7 @@ describe('validateEnv', () => {
   });
 
   it('rejects a missing DATABASE_URL', () => {
-    expect(() => validateEnv({ CORS_ORIGIN: required.CORS_ORIGIN })).toThrow(
+    expect(() => validateEnv({ SITE_URL: required.SITE_URL })).toThrow(
       /DATABASE_URL must be a postgres.*\(missing\)/,
     );
   });
@@ -73,7 +73,7 @@ describe('validateEnv', () => {
 
   it('lists every problem in one error', () => {
     expect(() => validateEnv({ PORT: 'abc' })).toThrow(
-      /DATABASE_URL[\s\S]*CORS_ORIGIN[\s\S]*PORT|PORT[\s\S]*DATABASE_URL[\s\S]*CORS_ORIGIN/,
+      /DATABASE_URL[\s\S]*SITE_URL[\s\S]*PORT|PORT[\s\S]*DATABASE_URL[\s\S]*SITE_URL/,
     );
   });
 
