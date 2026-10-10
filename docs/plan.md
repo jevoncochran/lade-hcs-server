@@ -30,7 +30,8 @@ Ride data (rider identity + trips to medical appointments, addresses, mobility n
 
 - Every vendor that stores or processes PHI signs a BAA: Google Cloud, AWS. Stripe and the email provider receive **no PHI**.
 - Collect the minimum. No date of birth. Medicaid/insurance IDs not collected (to be revisited).
-- PHI fields encrypted at the application layer (AES-256-GCM via a Prisma client extension, key from KMS). Searchable fields get an HMAC blind index.
+- PHI fields encrypted at the application layer (AES-256-GCM via a Prisma client extension in `src/prisma/encryption.extension.ts`). Searchable fields get an HMAC blind index, computed by the extension. Filtering or sorting on an encrypted field throws. Raw SQL bypasses encryption and must never touch PHI columns.
+- Keys (`ENCRYPTION_KEYS`, `ENCRYPTION_ACTIVE_KEY_ID`, `BLIND_INDEX_KEY`) live in Google Secret Manager in production. **Launch requirement:** production keys backed up outside Google Cloud (e.g. a Lade-controlled password manager). Losing them makes all patient data permanently unreadable.
 - PHI never written to logs, error trackers, emails, or Stripe metadata.
 - Append-only `AuditLog` for PHI access, changes, exports and auth events (DB role has INSERT/SELECT only).
 - Staff MFA required, 15-minute idle logout.
@@ -152,6 +153,10 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 - Replace placeholders in `src/lib/site.ts` with real details from the rate card (5100 N Nebraska Ave, Tampa, FL 33603; (708) 735-5701; info@ladehcs.com).
 - Add Bariatric wheelchair as a care level.
 - `/book-a-ride` page (phase 2) and `/admin` section (phase 3).
+
+**Engineering:**
+
+- Re-encryption job for key rotation (re-encrypt rows still on an old key id).
 
 **Engineering before phase 1:**
 

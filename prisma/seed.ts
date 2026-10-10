@@ -1,6 +1,10 @@
-import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { CareLevel, PriceChannel, PrismaClient } from "../generated/prisma/client";
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import {
+  CareLevel,
+  PriceChannel,
+  PrismaClient,
+} from '../src/generated/prisma/client.js';
 
 // Starting rates from Lade's 2026 rate card (public = partner rates for now).
 // Stretcher rate and all no-show / late-cancel fees are proposed, pending

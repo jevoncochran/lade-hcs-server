@@ -4,10 +4,14 @@
 // Prisma client extension. They are always `String` in the database, even when
 // the plaintext is structured (addresses are JSON-serialized before encryption).
 // Fields ending in `Hash` are HMAC blind indexes so staff can exact-match search.
+// The encryption extension computes them on every write; they're optional in
+// the schema only so callers don't have to (and can't) supply them.
 
 generator client {
-  provider = "prisma-client"
-  output   = "../generated/prisma"
+  provider            = "prisma-client"
+  output              = "../src/generated/prisma"
+  moduleFormat        = "esm"
+  importFileExtension = "js"
 }
 
 datasource db {
@@ -117,13 +121,13 @@ model Booking {
   requesterName         String /// @encrypted
   requesterEmail        String /// @encrypted
   requesterPhone        String /// @encrypted
-  requesterEmailHash    String
-  requesterPhoneHash    String
+  requesterEmailHash    String?
+  requesterPhoneHash    String?
 
   // Who is riding
   riderName     String /// @encrypted
   riderPhone    String? /// @encrypted
-  riderNameHash String
+  riderNameHash String?
   mobilityNotes String? /// @encrypted  e.g. power chair, help on stairs
   instructions  String? /// @encrypted  e.g. gate code, meet in lobby
 
