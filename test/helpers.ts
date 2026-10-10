@@ -1,6 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
-import { Test } from '@nestjs/testing';
+import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
@@ -12,10 +12,14 @@ export const SITE_URL = 'http://localhost:3000';
 // Boots the full app (same pipeline as main.ts) against lade_hcs_test.
 // Pass `AppModule` in: test files that change env vars must import it only
 // after changing them.
-export const createTestApp = async (appModule: unknown) => {
-  const moduleRef = await Test.createTestingModule({
-    imports: [appModule as never],
-  }).compile();
+export const createTestApp = async (
+  appModule: unknown,
+  // e.g. (builder) => builder.overrideProvider(X).useValue(fake)
+  customize: (builder: TestingModuleBuilder) => TestingModuleBuilder = (b) => b,
+) => {
+  const moduleRef = await customize(
+    Test.createTestingModule({ imports: [appModule as never] }),
+  ).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({
     logger: ['error', 'warn'],
   });
@@ -70,3 +74,28 @@ export const resetAccountTables = async (prisma: PrismaService) => {
 
 export const uniqueEmail = (label: string) =>
   `${label}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}@example.com`;
+
+// Signs up, verifies and signs in a new customer; returns their browser.
+export const signedInCustomer = async (
+  app: INestApplication<App>,
+  mailer: LogMailer,
+) => {
+  const email = uniqueEmail('customer');
+  const password = 'customer passphrase';
+  const client = browser(app);
+  await client
+    .post('/auth/signup', {
+      firstName: 'Dana',
+      lastName: 'Smith',
+      email,
+      phone: '813-555-0100',
+      password,
+      acceptTerms: true,
+    })
+    .expect(202);
+  await client
+    .post('/auth/verify-email', { token: tokenFromLastEmail(mailer, email) })
+    .expect(200);
+  await client.post('/auth/login', { email, password }).expect(204);
+  return client;
+};

@@ -10,9 +10,8 @@ import { CryptoModule } from './crypto/crypto.module.js';
 import { CustomerAuthModule } from './customer-auth/customer-auth.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MailModule } from './mail/mail.module.js';
-import { MileageModule } from './mileage/mileage.module.js';
-import { PricingModule } from './pricing/pricing.module.js';
 import { PrismaModule } from './prisma/prisma.module.js';
+import { QuotesModule } from './quotes/quotes.module.js';
 import { StaffAuthModule } from './staff-auth/staff-auth.module.js';
 
 @Module({
@@ -31,10 +30,9 @@ import { StaffAuthModule } from './staff-auth/staff-auth.module.js';
     AuditModule,
     MailModule,
     HealthModule,
-    PricingModule,
-    MileageModule,
     CustomerAuthModule,
     StaffAuthModule,
+    QuotesModule,
   ],
   providers: [
     // Order matters: rate limit first, then the CSRF origin check.

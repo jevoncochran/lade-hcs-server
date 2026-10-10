@@ -80,7 +80,7 @@ Rules:
 
 ## Booking & payment flow
 
-1. `POST /quotes` → price breakdown, or "call for a quote" (long distance, out of state, no pricing rule).
+1. `POST /quotes` (signed-in customers) → price breakdown, or "call for a quote" with a reason (`SHORT_NOTICE` under 24h, `LONG_DISTANCE`, `OUT_OF_STATE`, `NO_RATE`) and a message to show. Body: care level, trip kind, pickup + drop-off address, pickup time (ISO with time zone). Nothing is stored; an unfindable address returns 422 with `field: pickup|dropoff`. Distances come from `DistanceProvider` (stand-in `EstimatedDistanceProvider` until AWS Location Service).
 2. `POST /bookings` (idempotency key, honeypot, rate limited) → server recalculates price, records terms version + acceptance, creates booking `PENDING_PAYMENT`, a Stripe Customer (email only) and a SetupIntent (`usage: off_session`). Returns the client secret.
 3. Site confirms the card with the Stripe Payment Element. Webhook `setup_intent.succeeded` → booking `REQUESTED`, payment `CARD_SAVED`, PHI-free staff alert email.
 4. Abandoned `PENDING_PAYMENT` bookings are deleted after 1 hour.

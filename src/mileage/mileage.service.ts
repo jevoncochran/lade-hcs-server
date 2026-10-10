@@ -2,7 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { TripKind } from '../generated/prisma/client.js';
 import type { QuoteLeg } from '../pricing/pricing.js';
 import type { Address } from './address.js';
-import { DistanceProvider } from './distance-provider.js';
+import {
+  AddressNotFoundError,
+  DistanceProvider,
+  UnknownAddressError,
+} from './distance-provider.js';
 
 export type MeasuredLeg = QuoteLeg & { pickup: Address; dropoff: Address };
 
@@ -19,22 +23,34 @@ export class MileageService {
     pickup: Address,
     dropoff: Address,
   ): Promise<MeasuredLeg[]> {
-    const outbound = await this.measureLeg(pickup, dropoff);
+    const outbound = await this.measureLeg(pickup, dropoff, false);
     if (tripKind === TripKind.ONE_WAY) return [outbound];
 
-    return [outbound, await this.measureLeg(dropoff, pickup)];
+    return [outbound, await this.measureLeg(dropoff, pickup, true)];
   }
 
   private async measureLeg(
     pickup: Address,
     dropoff: Address,
+    isReturn: boolean,
   ): Promise<MeasuredLeg> {
+    let distanceMeters: number;
+    try {
+      distanceMeters = await this.distances.drivingDistance(pickup, dropoff);
+    } catch (error) {
+      if (!(error instanceof UnknownAddressError)) throw error;
+      // On the return leg "from" is the trip's drop-off address.
+      const fromIsPickup = !isReturn;
+      const isTripPickup = (error.which === 'from') === fromIsPickup;
+      throw new AddressNotFoundError(isTripPickup ? 'pickup' : 'dropoff');
+    }
+
     return {
       pickup,
       dropoff,
       pickupState: pickup.state.toUpperCase(),
       dropoffState: dropoff.state.toUpperCase(),
-      distanceMeters: await this.distances.drivingDistance(pickup, dropoff),
+      distanceMeters,
     };
   }
 }
