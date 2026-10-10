@@ -1,0 +1,349 @@
+// Lade HCS booking backend schema. See docs/plan.md for the decisions behind it.
+//
+// PHI: fields marked `/// @encrypted` hold AES-256-GCM ciphertext written by a
+// Prisma client extension. They are always `String` in the database, even when
+// the plaintext is structured (addresses are JSON-serialized before encryption).
+// Fields ending in `Hash` are HMAC blind indexes so staff can exact-match search.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ---------- Enums ----------
+
+enum CareLevel {
+  AMBULATORY
+  WHEELCHAIR
+  BARIATRIC_WHEELCHAIR
+  STRETCHER
+}
+
+enum TripType {
+  MEDICAL_APPOINTMENT
+  HOSPITAL_DISCHARGE
+  DIALYSIS_RECURRING
+  PRIVATE
+}
+
+enum TripKind {
+  ONE_WAY
+  ROUND_TRIP
+  WAIT_AND_RETURN
+}
+
+enum RequesterRelationship {
+  SELF
+  FAMILY_CAREGIVER
+  FACILITY_STAFF
+  OTHER
+}
+
+enum BookingStatus {
+  PENDING_PAYMENT // quoted, card not saved yet
+  REQUESTED // card saved, waiting on staff
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum LegDirection {
+  OUTBOUND
+  RETURN
+}
+
+enum LegStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum PaymentStatus {
+  CARD_PENDING // SetupIntent created
+  CARD_SAVED // card on file, not charged
+  CHARGED
+  FAILED
+  REFUNDED
+  PARTIALLY_REFUNDED
+  CANCELED
+}
+
+enum ChargeType {
+  BASE_FARE
+  MILEAGE
+  WAIT_TIME
+  NO_SHOW
+  LATE_CANCELLATION
+  ADJUSTMENT // staff correction or refund, note required
+}
+
+enum PriceChannel {
+  PUBLIC // online card bookings
+  PARTNER // invoiced facilities (later phase)
+}
+
+enum StaffRole {
+  ADMIN
+  DISPATCHER
+}
+
+enum ActorType {
+  PUBLIC
+  STAFF
+  SYSTEM
+}
+
+// ---------- Bookings ----------
+
+model Booking {
+  id             String        @id @default(uuid()) @db.Uuid
+  reference      String        @unique // short code for phone calls, e.g. "LD-7K3Q9"
+  status         BookingStatus @default(PENDING_PAYMENT)
+  idempotencyKey String        @unique // stops double bookings on resubmit
+
+  careLevel      CareLevel
+  tripType       TripType
+  tripKind       TripKind
+  companionCount Int       @default(0)
+
+  // Who is booking (may be the rider, family or a facility)
+  requesterRelationship RequesterRelationship
+  requesterName         String /// @encrypted
+  requesterEmail        String /// @encrypted
+  requesterPhone        String /// @encrypted
+  requesterEmailHash    String
+  requesterPhoneHash    String
+
+  // Who is riding
+  riderName     String /// @encrypted
+  riderPhone    String? /// @encrypted
+  riderNameHash String
+  mobilityNotes String? /// @encrypted  e.g. power chair, help on stairs
+  instructions  String? /// @encrypted  e.g. gate code, meet in lobby
+
+  // Quote snapshot: later price changes never affect this booking
+  pricingRuleId    String      @db.Uuid
+  pricingRule      PricingRule @relation(fields: [pricingRuleId], references: [id])
+  billableMeters   Int // passenger distance, both legs combined
+  quotedPriceCents Int // base fare + mileage shown at checkout
+  currency         String      @default("usd")
+  priceBreakdown   Json // line items; never PHI
+
+  // Consent to off-session charges (wait time, no-show, late cancel)
+  termsVersion    String
+  termsAcceptedAt DateTime @db.Timestamptz(6)
+
+  // "Manage your ride" link for customers without accounts
+  manageTokenHash      String?   @unique
+  manageTokenExpiresAt DateTime? @db.Timestamptz(6)
+
+  cancelledAt        DateTime? @db.Timestamptz(6)
+  cancellationReason String? /// @encrypted
+
+  legs     TripLeg[]
+  charges  BookingCharge[]
+  payments Payment[]
+  events   BookingEvent[]
+
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+  deletedAt DateTime? @db.Timestamptz(6) // soft delete; purged by retention job
+
+  @@index([status])
+  @@index([requesterEmailHash])
+  @@index([requesterPhoneHash])
+  @@index([riderNameHash])
+}
+
+model TripLeg {
+  id        String       @id @default(uuid()) @db.Uuid
+  bookingId String       @db.Uuid
+  booking   Booking      @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  direction LegDirection
+  status    LegStatus    @default(SCHEDULED)
+
+  pickupAt      DateTime? @db.Timestamptz(6) // null while will-call
+  willCall      Boolean   @default(false)
+  appointmentAt DateTime? @db.Timestamptz(6)
+  waitMinutes   Int? // expected wait, for wait-and-return
+  waitedMinutes Int? // actual wait, entered by staff after the ride
+
+  pickupAddress  String /// @encrypted  JSON { line1, line2, city, state, zip, notes }
+  dropoffAddress String /// @encrypted  JSON, same shape
+  distanceMeters Int
+
+  charges BookingCharge[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@unique([bookingId, direction])
+  @@index([pickupAt]) // dispatch board: today's rides
+}
+
+model BookingCharge {
+  id          String     @id @default(uuid()) @db.Uuid
+  bookingId   String     @db.Uuid
+  booking     Booking    @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  legId       String?    @db.Uuid // wait time and no-shows apply to one leg
+  leg         TripLeg?   @relation(fields: [legId], references: [id], onDelete: SetNull)
+  type        ChargeType
+  amountCents Int // negative allowed for ADJUSTMENT
+  quantity    Decimal?   @db.Decimal(10, 2) // miles, or number of 15-minute blocks
+  createdById String?    @db.Uuid // null when created by the system
+  createdBy   StaffUser? @relation(fields: [createdById], references: [id])
+  note        String? /// @encrypted
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@index([bookingId])
+  @@index([legId])
+}
+
+model BookingEvent {
+  id          String         @id @default(uuid()) @db.Uuid
+  bookingId   String         @db.Uuid
+  booking     Booking        @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fromStatus  BookingStatus?
+  toStatus    BookingStatus
+  actorType   ActorType
+  staffUserId String?        @db.Uuid
+  staffUser   StaffUser?     @relation(fields: [staffUserId], references: [id])
+  note        String? /// @encrypted
+  createdAt   DateTime       @default(now()) @db.Timestamptz(6)
+
+  @@index([bookingId, createdAt])
+}
+
+// ---------- Payments (Stripe) ----------
+// Only Stripe IDs and amounts live here. No PHI is sent to Stripe:
+// the booking id is the only metadata.
+
+model Payment {
+  id        String        @id @default(uuid()) @db.Uuid
+  bookingId String        @db.Uuid
+  booking   Booking       @relation(fields: [bookingId], references: [id])
+  status    PaymentStatus @default(CARD_PENDING)
+
+  stripeCustomerId      String
+  stripeSetupIntentId   String? @unique
+  stripePaymentMethodId String?
+  stripePaymentIntentId String? @unique
+
+  amountCents   Int
+  refundedCents Int     @default(0)
+  failureCode   String?
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+
+  @@index([bookingId])
+}
+
+// Webhook events already handled, so Stripe retries never double-process.
+model StripeEvent {
+  id          String   @id // Stripe's event id
+  type        String
+  processedAt DateTime @default(now()) @db.Timestamptz(6)
+}
+
+// One active rule per channel + care level. When prices change, set
+// `effectiveTo` on the old row and insert a new one.
+model PricingRule {
+  id                   String       @id @default(uuid()) @db.Uuid
+  channel              PriceChannel @default(PUBLIC)
+  careLevel            CareLevel
+  oneWayBaseCents      Int
+  roundTripBaseCents   Int
+  perMileCents         Int
+  waitGraceMinutes     Int          @default(15)
+  waitIncrementMinutes Int          @default(15)
+  waitIncrementCents   Int          @default(1500)
+  noShowFeeCents       Int
+  lateCancelFeeCents   Int
+  effectiveFrom        DateTime     @default(now()) @db.Timestamptz(6)
+  effectiveTo          DateTime?    @db.Timestamptz(6)
+
+  bookings Booking[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+
+  @@index([channel, careLevel, effectiveFrom])
+}
+
+// ---------- Staff & auth ----------
+
+model StaffUser {
+  id               String    @id @default(uuid()) @db.Uuid
+  email            String    @unique
+  name             String
+  passwordHash     String // argon2id
+  role             StaffRole @default(DISPATCHER)
+  isActive         Boolean   @default(true)
+  mfaSecret        String? /// @encrypted  TOTP secret
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime? @db.Timestamptz(6)
+  lastLoginAt      DateTime? @db.Timestamptz(6)
+
+  refreshTokens  RefreshToken[]
+  bookingEvents  BookingEvent[]
+  bookingCharges BookingCharge[]
+  auditLogs      AuditLog[]
+  sentInvites    StaffInvite[]
+
+  createdAt DateTime @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime @updatedAt @db.Timestamptz(6)
+}
+
+model RefreshToken {
+  id          String    @id @default(uuid()) @db.Uuid
+  staffUserId String    @db.Uuid
+  staffUser   StaffUser @relation(fields: [staffUserId], references: [id], onDelete: Cascade)
+  tokenHash   String    @unique
+  expiresAt   DateTime  @db.Timestamptz(6)
+  revokedAt   DateTime? @db.Timestamptz(6)
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([staffUserId])
+}
+
+// One-time 48-hour link for a new staff member to set a password and MFA.
+model StaffInvite {
+  id          String    @id @default(uuid()) @db.Uuid
+  email       String
+  role        StaffRole @default(DISPATCHER)
+  tokenHash   String    @unique
+  expiresAt   DateTime  @db.Timestamptz(6)
+  acceptedAt  DateTime? @db.Timestamptz(6)
+  revokedAt   DateTime? @db.Timestamptz(6)
+  invitedById String    @db.Uuid
+  invitedBy   StaffUser @relation(fields: [invitedById], references: [id])
+  createdAt   DateTime  @default(now()) @db.Timestamptz(6)
+
+  @@index([email])
+}
+
+// ---------- HIPAA audit trail ----------
+// Append-only: the app's database role gets INSERT/SELECT only on this table.
+
+model AuditLog {
+  id          String     @id @default(uuid()) @db.Uuid
+  actorType   ActorType
+  staffUserId String?    @db.Uuid
+  staffUser   StaffUser? @relation(fields: [staffUserId], references: [id])
+  action      String // "booking.view", "booking.update", "auth.login_failed", ...
+  entityType  String?
+  entityId    String?
+  ipAddress   String?
+  userAgent   String?
+  metadata    Json? // never PHI
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
+
+  @@index([entityType, entityId])
+  @@index([staffUserId, createdAt])
+}

@@ -1,0 +1,11 @@
+node_modules/
+dist/
+generated/
+
+# Env files hold secrets. Commit .env.example only.
+.env
+.env.*
+!.env.example
+
+.DS_Store
+*.log
