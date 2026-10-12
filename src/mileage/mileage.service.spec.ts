@@ -24,6 +24,7 @@ const dropoff: Address = {
 describe('MileageService', () => {
   // Different distances each way, to prove legs are measured separately.
   const distances = {
+    isEstimate: true,
     drivingDistance: vi.fn<(from: Address, to: Address) => Promise<number>>(
       async (from) => (from === pickup ? 8000 : 8500),
     ),
@@ -42,6 +43,10 @@ describe('MileageService', () => {
       ],
     }).compile();
     mileage = module.get(MileageService);
+  });
+
+  it('passes on whether distances are estimates', () => {
+    expect(mileage.distancesAreEstimates).toBe(true);
   });
 
   it('measures one leg for a one-way trip', async () => {

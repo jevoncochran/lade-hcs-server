@@ -9,7 +9,7 @@ import {
 import { METERS_PER_MILE } from '../src/pricing/pricing.js';
 import { PricingService } from '../src/pricing/pricing.service.js';
 import type { PrismaService } from '../src/prisma/prisma.service.js';
-import { createTestApp } from './helpers.js';
+import { createTestApp, resetBookingTables } from './helpers.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -41,7 +41,7 @@ describe('PricingService (e2e)', () => {
   beforeAll(async () => {
     ({ app, prisma } = await createTestApp(AppModule));
     pricing = app.get(PricingService);
-    await prisma.booking.deleteMany();
+    await resetBookingTables(prisma);
     await prisma.pricingRule.deleteMany();
   });
 

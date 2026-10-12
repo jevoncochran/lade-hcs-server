@@ -9,5 +9,6 @@ import { QuotesService } from './quotes.service.js';
   imports: [CustomerAuthModule, MileageModule, PricingModule],
   controllers: [QuotesController],
   providers: [QuotesService],
+  exports: [QuotesService],
 })
 export class QuotesModule {}

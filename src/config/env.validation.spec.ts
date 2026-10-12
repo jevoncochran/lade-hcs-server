@@ -97,7 +97,7 @@ describe('validateEnv', () => {
 
   it('refuses development stand-ins in production', () => {
     expect(() => validateEnv({ ...required, NODE_ENV: 'production' })).toThrow(
-      /MAIL_TRANSPORT "log"[\s\S]*MILEAGE_PROVIDER "estimate"/,
+      /MAIL_TRANSPORT "log"[\s\S]*PAYMENT_PROVIDER "fake"[\s\S]*MILEAGE_PROVIDER "estimate"/,
     );
   });
 
@@ -106,6 +106,70 @@ describe('validateEnv', () => {
       validateEnv({ ...required, NODE_ENV: 'development' }),
     ).not.toThrow();
     expect(() => validateEnv({ ...required, NODE_ENV: 'test' })).not.toThrow();
+  });
+
+  describe('AWS Location', () => {
+    it('requires an API key when mileage uses AWS', () => {
+      expect(() =>
+        validateEnv({ ...required, MILEAGE_PROVIDER: 'aws' }),
+      ).toThrow(/AWS_LOCATION_API_KEY is required/);
+      expect(() =>
+        validateEnv({
+          ...required,
+          MILEAGE_PROVIDER: 'aws',
+          AWS_LOCATION_API_KEY: 'v1.public.abc',
+        }),
+      ).not.toThrow();
+    });
+
+    it('defaults to us-east-1', () => {
+      expect(validateEnv(required).AWS_REGION).toBe('us-east-1');
+    });
+  });
+
+  describe('Stripe', () => {
+    const stripe = { ...required, PAYMENT_PROVIDER: 'stripe' };
+
+    it('accepts a test key in development', () => {
+      expect(() =>
+        validateEnv({ ...stripe, STRIPE_SECRET_KEY: 'sk_test_abc123' }),
+      ).not.toThrow();
+    });
+
+    it('requires a secret key when Stripe is on', () => {
+      expect(() => validateEnv(stripe)).toThrow(/STRIPE_SECRET_KEY must be/);
+      expect(() =>
+        validateEnv({ ...stripe, STRIPE_SECRET_KEY: 'pk_test_abc' }),
+      ).toThrow(/STRIPE_SECRET_KEY must be/);
+    });
+
+    it('checks the webhook secret format', () => {
+      expect(() =>
+        validateEnv({
+          ...stripe,
+          STRIPE_SECRET_KEY: 'sk_test_abc',
+          STRIPE_WEBHOOK_SECRET: 'nope',
+        }),
+      ).toThrow(/whsec_/);
+    });
+
+    it('requires a live key and a webhook secret in production', () => {
+      const error = (() => {
+        try {
+          validateEnv({
+            ...stripe,
+            NODE_ENV: 'production',
+            STRIPE_SECRET_KEY: 'sk_test_abc',
+          });
+        } catch (e) {
+          return (e as Error).message;
+        }
+      })();
+
+      expect(error).toMatch(/live Stripe key/);
+      expect(error).toMatch(/STRIPE_WEBHOOK_SECRET/);
+      expect(error).not.toContain('sk_test_abc');
+    });
   });
 
   it('never echoes secret values in errors', () => {

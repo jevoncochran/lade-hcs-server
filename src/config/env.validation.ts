@@ -2,6 +2,7 @@ import { plainToInstance, Type } from 'class-transformer';
 import {
   IsEnum,
   IsIn,
+  IsOptional,
   IsInt,
   IsString,
   IsUrl,
@@ -63,10 +64,39 @@ export class Env {
   @IsIn(['log'])
   MAIL_TRANSPORT = 'log';
 
-  // "estimate" makes up consistent distances (development and tests only).
-  // AWS Location Service is added before launch.
-  @IsIn(['estimate'])
+  // "estimate" guesses distances from ZIP codes (development and tests
+  // only, no address autofill); "aws" uses Amazon Location Service for real
+  // driving distances and address autofill.
+  @IsIn(['estimate', 'aws'])
   MILEAGE_PROVIDER = 'estimate';
+
+  // Amazon Location Service (when MILEAGE_PROVIDER is "aws"). An API key
+  // limited to Places (Autocomplete, GetPlace, Geocode) and Routes
+  // (CalculateRoutes), with no referrer restriction. Real rider addresses
+  // must not be sent until the AWS BAA is accepted.
+  @IsString()
+  AWS_REGION = 'us-east-1';
+
+  @IsOptional()
+  @IsString()
+  AWS_LOCATION_API_KEY?: string;
+
+  // "fake" makes up payment ids and never charges (development and tests
+  // only); "stripe" uses the keys below.
+  @IsIn(['fake', 'stripe'])
+  PAYMENT_PROVIDER = 'fake';
+
+  // Stripe secret key (sk_test_… for development, sk_live_… in production).
+  @IsOptional()
+  @IsString()
+  STRIPE_SECRET_KEY?: string;
+
+  // Signing secret of the Stripe webhook endpoint (whsec_…). Optional in
+  // development: the website confirms saved cards directly; the webhook is
+  // the production backup.
+  @IsOptional()
+  @IsString()
+  STRIPE_WEBHOOK_SECRET?: string;
 
   // Requests per minute per IP to each login / sign-up / reset endpoint.
   @Type(() => Number)
@@ -121,6 +151,9 @@ export class Env {
 // Values never echoed in error messages: they'd end up in deploy logs.
 const SECRET_SETTINGS = new Set([
   'DATABASE_URL',
+  'AWS_LOCATION_API_KEY',
+  'STRIPE_SECRET_KEY',
+  'STRIPE_WEBHOOK_SECRET',
   'ENCRYPTION_KEYS',
   'BLIND_INDEX_KEY',
 ]);
@@ -177,12 +210,47 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
     );
   }
 
+  if (env.MILEAGE_PROVIDER === 'aws' && !env.AWS_LOCATION_API_KEY) {
+    messages.push(
+      '  - AWS_LOCATION_API_KEY is required when MILEAGE_PROVIDER is "aws"',
+    );
+  }
+
+  if (env.PAYMENT_PROVIDER === 'stripe') {
+    if (!/^sk_(test|live)_\w+$/.test(env.STRIPE_SECRET_KEY ?? '')) {
+      messages.push(
+        '  - STRIPE_SECRET_KEY must be a Stripe secret key (sk_test_… or sk_live_…) when PAYMENT_PROVIDER is "stripe"',
+      );
+    }
+    // An empty value (e.g. "STRIPE_WEBHOOK_SECRET=" in .env) means not set.
+    if (
+      env.STRIPE_WEBHOOK_SECRET &&
+      !/^whsec_\w+$/.test(env.STRIPE_WEBHOOK_SECRET)
+    ) {
+      messages.push('  - STRIPE_WEBHOOK_SECRET must start with whsec_');
+    }
+  }
+
   // Stand-ins that would silently mislead real customers: never in production.
   if (env.NODE_ENV === NodeEnv.Production) {
     if (env.MAIL_TRANSPORT === 'log') {
       messages.push(
         '  - MAIL_TRANSPORT "log" only prints emails; production must send them',
       );
+    }
+    if (env.PAYMENT_PROVIDER === 'fake') {
+      messages.push(
+        '  - PAYMENT_PROVIDER "fake" never saves or charges cards; production needs Stripe',
+      );
+    } else {
+      if (!env.STRIPE_SECRET_KEY?.startsWith('sk_live_')) {
+        messages.push('  - Production needs a live Stripe key (sk_live_…)');
+      }
+      if (!env.STRIPE_WEBHOOK_SECRET) {
+        messages.push(
+          '  - Production needs STRIPE_WEBHOOK_SECRET so saved cards are confirmed even if the customer closes the page',
+        );
+      }
     }
     if (env.MILEAGE_PROVIDER === 'estimate') {
       messages.push(

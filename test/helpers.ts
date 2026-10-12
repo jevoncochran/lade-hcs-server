@@ -22,6 +22,7 @@ export const createTestApp = async (
   ).compile();
   const app = moduleRef.createNestApplication<NestExpressApplication>({
     logger: ['error', 'warn'],
+    rawBody: true, // same as main.ts
   });
   configureApp(app);
   await app.init();
@@ -56,8 +57,8 @@ export const tokenFromLastEmail = (mailer: LogMailer, to: string) => {
   return token;
 };
 
-// Wipes account data between test files. Test database only.
-export const resetAccountTables = async (prisma: PrismaService) => {
+// Refuses to run against anything but a test database.
+const assertTestDatabase = async (prisma: PrismaService) => {
   const [{ name }] = await prisma.$queryRaw<
     { name: string }[]
   >`SELECT current_database() AS name`;
@@ -66,9 +67,23 @@ export const resetAccountTables = async (prisma: PrismaService) => {
       `Refusing to wipe tables in "${name}": not a test database`,
     );
   }
+};
+
+// Wipes account data between test files. Test database only.
+export const resetAccountTables = async (prisma: PrismaService) => {
+  await assertTestDatabase(prisma);
   await prisma.$executeRawUnsafe(
     'TRUNCATE "AuditLog", "CustomerToken", "CustomerSession", "Customer", ' +
       '"StaffSession", "StaffInvite", "StaffUser" CASCADE',
+  );
+};
+
+// Wipes bookings and everything hanging off them (payments, legs, charges,
+// history). Test database only.
+export const resetBookingTables = async (prisma: PrismaService) => {
+  await assertTestDatabase(prisma);
+  await prisma.$executeRawUnsafe(
+    'TRUNCATE "Payment", "BookingCharge", "BookingEvent", "TripLeg", "Booking" CASCADE',
   );
 };
 

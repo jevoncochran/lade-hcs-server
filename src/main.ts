@@ -8,7 +8,10 @@ import type { Env } from './config/env.validation.js';
 const bootstrap = async () => {
   // Config is validated while the app module loads; a bad setting stops
   // startup here with a list of what's wrong.
-  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+  // rawBody: Stripe webhook signatures are checked against the exact bytes.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+    rawBody: true,
+  });
   configureApp(app);
 
   // Lets Cloud Run stop the container cleanly (closes DB connections).

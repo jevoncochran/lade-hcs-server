@@ -4,11 +4,11 @@ import {
   HttpCode,
   HttpStatus,
   Post,
-  UnprocessableEntityException,
+  UseFilters,
   UseGuards,
 } from '@nestjs/common';
 import { CustomerAuthGuard } from '../customer-auth/customer-auth.guard.js';
-import { AddressNotFoundError } from '../mileage/distance-provider.js';
+import { AddressNotFoundFilter } from '../mileage/address-not-found.filter.js';
 import { CreateQuoteDto } from './dto/create-quote.dto.js';
 import { QuotesService } from './quotes.service.js';
 
@@ -16,24 +16,13 @@ import { QuotesService } from './quotes.service.js';
 // call a paid mapping service.
 @Controller('quotes')
 @UseGuards(CustomerAuthGuard)
+@UseFilters(AddressNotFoundFilter)
 export class QuotesController {
   constructor(private readonly quotes: QuotesService) {}
 
   @Post()
   @HttpCode(HttpStatus.OK)
-  async create(@Body() dto: CreateQuoteDto) {
-    try {
-      return await this.quotes.quote(dto);
-    } catch (error) {
-      // An address the map can't find: say which one, so the form can point
-      // at it. The address itself is never logged (PHI).
-      if (error instanceof AddressNotFoundError) {
-        throw new UnprocessableEntityException({
-          message: error.message,
-          field: error.which,
-        });
-      }
-      throw error;
-    }
+  create(@Body() dto: CreateQuoteDto) {
+    return this.quotes.quote(dto);
   }
 }

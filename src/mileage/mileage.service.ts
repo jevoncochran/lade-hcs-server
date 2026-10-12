@@ -18,6 +18,11 @@ export type MeasuredLeg = QuoteLeg & { pickup: Address; dropoff: Address };
 export class MileageService {
   constructor(private readonly distances: DistanceProvider) {}
 
+  // Whether distances are only estimates (development stand-in).
+  get distancesAreEstimates() {
+    return this.distances.isEstimate;
+  }
+
   async measureTrip(
     tripKind: TripKind,
     pickup: Address,

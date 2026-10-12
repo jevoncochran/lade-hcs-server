@@ -135,11 +135,12 @@ model Booking {
   requesterPhoneHash    String?
 
   // Who is riding
-  riderName     String /// @encrypted
-  riderPhone    String? /// @encrypted
-  riderNameHash String?
-  mobilityNotes String? /// @encrypted  e.g. power chair, help on stairs
-  instructions  String? /// @encrypted  e.g. gate code, meet in lobby
+  riderFirstName    String /// @encrypted
+  riderLastName     String /// @encrypted
+  riderPhone        String? /// @encrypted
+  riderLastNameHash String? // staff look riders up by last name
+  mobilityNotes     String? /// @encrypted  e.g. power chair, help on stairs
+  instructions      String? /// @encrypted  e.g. gate code, meet in lobby
 
   // Quote snapshot: later price changes never affect this booking
   pricingRuleId    String      @db.Uuid
@@ -173,7 +174,7 @@ model Booking {
   @@index([customerId])
   @@index([requesterEmailHash])
   @@index([requesterPhoneHash])
-  @@index([riderNameHash])
+  @@index([riderLastNameHash])
 }
 
 model TripLeg {

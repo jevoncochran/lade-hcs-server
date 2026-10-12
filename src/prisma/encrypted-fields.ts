@@ -10,7 +10,8 @@ export const ENCRYPTED_FIELDS: Partial<Record<ModelName, readonly string[]>> = {
     'requesterName',
     'requesterEmail',
     'requesterPhone',
-    'riderName',
+    'riderFirstName',
+    'riderLastName',
     'riderPhone',
     'mobilityNotes',
     'instructions',
@@ -32,7 +33,7 @@ export const BLIND_INDEXES: Partial<
   Booking: {
     requesterEmailHash: { source: 'requesterEmail', kind: 'email' },
     requesterPhoneHash: { source: 'requesterPhone', kind: 'phone' },
-    riderNameHash: { source: 'riderName', kind: 'name' },
+    riderLastNameHash: { source: 'riderLastName', kind: 'name' },
   },
   Customer: {
     emailHash: { source: 'email', kind: 'email' },

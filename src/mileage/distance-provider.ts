@@ -19,11 +19,27 @@ export class AddressNotFoundError extends Error {
   }
 }
 
+// The map service couldn't be reached or refused the request. Not the
+// customer's fault: the booking form asks them to try again or call.
+export class DistanceUnavailableError extends Error {
+  constructor() {
+    super(
+      "We couldn't calculate the distance right now. Please try again in a minute, or call us to book.",
+    );
+    this.name = 'DistanceUnavailableError';
+  }
+}
+
 // Injection token for driving distances. Implementations, chosen by
 // MILEAGE_PROVIDER:
-//   - EstimatedDistanceProvider: development stand-in (no outside calls)
-//   - AWS Location Service: production, under the AWS BAA (to be added)
+//   - EstimatedDistanceProvider: development stand-in, from ZIP codes only
+//   - AwsDistanceProvider: Amazon Location Service (production, under the
+//     AWS BAA)
 export abstract class DistanceProvider {
+  // True for stand-ins that don't measure the real route. Quotes and
+  // bookings carry this so the website can label the distance.
+  abstract readonly isEstimate: boolean;
+
   // Driving distance in meters from `from` to `to`. Throws
   // UnknownAddressError if either address can't be found.
   abstract drivingDistance(from: Address, to: Address): Promise<number>;

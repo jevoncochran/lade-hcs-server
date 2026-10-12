@@ -31,7 +31,8 @@ describe('PHI encryption (e2e)', () => {
     requesterName: 'Dana Smith',
     requesterEmail: 'Dana.Smith@Example.com',
     requesterPhone: '(813) 555-0100',
-    riderName: 'Mary Smith',
+    riderFirstName: 'Mary',
+    riderLastName: 'Smith',
     mobilityNotes: 'Power chair, needs help on stairs',
     pricingRuleId,
     billableMeters: 16093,
@@ -81,10 +82,11 @@ describe('PHI encryption (e2e)', () => {
     const created = await prisma.booking.create({ data: bookingData() });
     const raw = await rawBooking(created.id);
 
-    expect(created.riderName).toBe('Mary Smith');
+    expect(created.riderFirstName).toBe('Mary');
+    expect(created.riderLastName).toBe('Smith');
     expect(created.mobilityNotes).toBe('Power chair, needs help on stairs');
 
-    expect(raw.riderName).toMatch(/^v1:k1:/);
+    expect(raw.riderLastName).toMatch(/^v1:k1:/);
     expect(raw.requesterEmail).toMatch(/^v1:k1:/);
     expect(JSON.stringify(raw)).not.toMatch(/Mary|Dana|Power chair|0100/);
   });
@@ -97,7 +99,7 @@ describe('PHI encryption (e2e)', () => {
       blindIndex.hash('email', 'dana.smith@example.com'),
     );
     expect(raw.requesterPhoneHash).toBe(blindIndex.hash('phone', '8135550100'));
-    expect(raw.riderNameHash).toBe(blindIndex.hash('name', 'mary smith'));
+    expect(raw.riderLastNameHash).toBe(blindIndex.hash('name', 'smith'));
   });
 
   it('finds bookings by hash with a differently formatted search', async () => {
@@ -152,13 +154,13 @@ describe('PHI encryption (e2e)', () => {
 
     const updated = await prisma.booking.update({
       where: { id: created.id },
-      data: { riderName: 'Mary Jones', instructions: 'Gate code 4512' },
+      data: { riderLastName: 'Jones', instructions: 'Gate code 4512' },
     });
     const raw = await rawBooking(created.id);
 
-    expect(updated.riderName).toBe('Mary Jones');
+    expect(updated.riderLastName).toBe('Jones');
     expect(raw.instructions).toMatch(/^v1:k1:/);
-    expect(raw.riderNameHash).toBe(blindIndex.hash('name', 'Mary Jones'));
+    expect(raw.riderLastNameHash).toBe(blindIndex.hash('name', 'Jones'));
   });
 
   it('keeps null optional fields as null', async () => {
@@ -173,17 +175,17 @@ describe('PHI encryption (e2e)', () => {
     await prisma.booking.createMany({ data: rows });
 
     const raw = await prisma.$queryRaw<
-      { riderName: string }[]
-    >`SELECT "riderName" FROM "Booking" WHERE reference IN (${rows[0].reference}, ${rows[1].reference})`;
+      { riderLastName: string }[]
+    >`SELECT "riderLastName" FROM "Booking" WHERE reference IN (${rows[0].reference}, ${rows[1].reference})`;
     expect(raw).toHaveLength(2);
-    expect(raw.every((r) => r.riderName.startsWith('v1:'))).toBe(true);
+    expect(raw.every((r) => r.riderLastName.startsWith('v1:'))).toBe(true);
   });
 
   it('refuses to filter on an encrypted field', async () => {
     await expect(
-      prisma.booking.findMany({ where: { riderName: 'Mary Smith' } }),
+      prisma.booking.findMany({ where: { riderLastName: 'Smith' } }),
     ).rejects.toThrow(
-      /Cannot filter or sort on encrypted field Booking.riderName; filter on riderNameHash/,
+      /Cannot filter or sort on encrypted field Booking.riderLastName; filter on riderLastNameHash/,
     );
   });
 
@@ -197,15 +199,15 @@ describe('PHI encryption (e2e)', () => {
 
   it('refuses to sort on an encrypted field', async () => {
     await expect(
-      prisma.booking.findMany({ orderBy: { riderName: 'asc' } }),
-    ).rejects.toThrow(/encrypted field Booking.riderName/);
+      prisma.booking.findMany({ orderBy: { riderLastName: 'asc' } }),
+    ).rejects.toThrow(/encrypted field Booking.riderLastName/);
   });
 
   it('refuses to set a search hash directly', async () => {
     await expect(
       prisma.booking.create({
-        data: { ...bookingData(), riderNameHash: 'forged' } as never,
+        data: { ...bookingData(), riderLastNameHash: 'forged' } as never,
       }),
-    ).rejects.toThrow(/riderNameHash is derived from riderName/);
+    ).rejects.toThrow(/riderLastNameHash is derived from riderLastName/);
   });
 });

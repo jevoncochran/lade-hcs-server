@@ -1,0 +1,64 @@
+import {
+  Body,
+  Controller,
+  Get,
+  HttpCode,
+  HttpStatus,
+  Param,
+  ParseUUIDPipe,
+  Post,
+  UseFilters,
+  UseGuards,
+} from '@nestjs/common';
+import {
+  ReqMeta,
+  type RequestMeta,
+} from '../common/decorators/req-meta.decorator.js';
+import { CurrentCustomer } from '../customer-auth/current-customer.decorator.js';
+import { CustomerAuthGuard } from '../customer-auth/customer-auth.guard.js';
+import type { SessionCustomer } from '../customer-auth/customer-session.service.js';
+import { AddressNotFoundFilter } from '../mileage/address-not-found.filter.js';
+import { BookingsService } from './bookings.service.js';
+import { CreateBookingDto } from './dto/create-booking.dto.js';
+
+// A customer's own bookings. Staff endpoints live separately (admin).
+@Controller('bookings')
+@UseGuards(CustomerAuthGuard)
+@UseFilters(AddressNotFoundFilter)
+export class BookingsController {
+  constructor(private readonly bookings: BookingsService) {}
+
+  @Post()
+  create(
+    @CurrentCustomer() customer: SessionCustomer,
+    @Body() dto: CreateBookingDto,
+    @ReqMeta() meta: RequestMeta,
+  ) {
+    return this.bookings.create(customer, dto, meta);
+  }
+
+  // After the customer finishes the card form: checks with the payment
+  // provider and, if the card was saved, moves the booking to REQUESTED.
+  @Post(':id/confirm-card')
+  @HttpCode(HttpStatus.OK)
+  confirmCard(
+    @CurrentCustomer() customer: SessionCustomer,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @ReqMeta() meta: RequestMeta,
+  ) {
+    return this.bookings.confirmCard(customer, id, meta);
+  }
+
+  @Get()
+  list(@CurrentCustomer() customer: SessionCustomer) {
+    return this.bookings.list(customer);
+  }
+
+  @Get(':id')
+  get(
+    @CurrentCustomer() customer: SessionCustomer,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+  ) {
+    return this.bookings.get(customer, id);
+  }
+}

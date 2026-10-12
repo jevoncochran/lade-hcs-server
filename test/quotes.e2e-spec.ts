@@ -14,6 +14,7 @@ import type { PrismaService } from '../src/prisma/prisma.service.js';
 import {
   browser,
   createTestApp,
+  resetBookingTables,
   resetAccountTables,
   signedInCustomer,
 } from './helpers.js';
@@ -42,6 +43,7 @@ const MILES: Record<string, number> = {
   '123 Palm Ave>1 Peachtree St': 20,
 };
 const fakeDistances = {
+  isEstimate: false,
   drivingDistance: async (from: Address, to: Address) => {
     if (from.line1 === NOWHERE.line1) throw new UnknownAddressError('from');
     if (to.line1 === NOWHERE.line1) throw new UnknownAddressError('to');
@@ -72,7 +74,7 @@ describe('POST /quotes (e2e)', () => {
       builder.overrideProvider(DistanceProvider).useValue(fakeDistances),
     ));
     await resetAccountTables(prisma);
-    await prisma.booking.deleteMany();
+    await resetBookingTables(prisma);
     await prisma.pricingRule.deleteMany();
     await prisma.pricingRule.createMany({
       data: [
@@ -125,6 +127,7 @@ describe('POST /quotes (e2e)', () => {
         ],
         totalCents: 11500,
         billableMiles: 10,
+        distanceIsEstimate: false,
         notes: [
           'Waiting time over 15 minutes is $15.00 for each 15 minutes, charged after the ride.',
         ],
