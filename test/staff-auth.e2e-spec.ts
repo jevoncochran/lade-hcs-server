@@ -35,15 +35,21 @@ describe('Staff accounts (e2e)', () => {
     const token = tokenOf(link);
     const client = browser(app);
 
+    // Same order as the setup page: scan, confirm the code, then details.
     const start = await client
       .post('/staff/invites/accept/start', { token })
+      .expect(200);
+    await client
+      .post('/staff/invites/accept/verify-code', {
+        token,
+        mfaCode: await codeFor(start.body.secret),
+      })
       .expect(200);
     await client
       .post('/staff/invites/accept/complete', {
         token,
         name: 'Owner One',
         password: PASSWORD,
-        mfaCode: await codeFor(start.body.secret),
       })
       .expect(204);
 
@@ -93,23 +99,85 @@ describe('Staff accounts (e2e)', () => {
       });
     });
 
-    it('rejects a wrong MFA code and creates no account', async () => {
+    it('rejects a wrong phone code, and will not finish without a right one', async () => {
       const email = uniqueEmail('wrongcode');
       const { link } = await invites.createInvite(email, StaffRole.ADMIN, null);
       const token = tokenOf(link);
       const client = browser(app);
       await client.post('/staff/invites/accept/start', { token }).expect(200);
 
-      await client
+      const wrong = await client
+        .post('/staff/invites/accept/verify-code', { token, mfaCode: '000000' })
+        .expect(400);
+      expect(wrong.body.message).toMatch(/didn't match/);
+
+      const complete = await client
         .post('/staff/invites/accept/complete', {
           token,
           name: 'Owner',
           password: PASSWORD,
-          mfaCode: '000000',
         })
         .expect(400);
+      expect(complete.body.message).toMatch(/Confirm the code from your phone/);
 
       expect(await prisma.staffUser.count({ where: { email } })).toBe(0);
+    });
+
+    it('accepts details long after the code, once the phone is confirmed', async () => {
+      const email = uniqueEmail('slow');
+      const { link } = await invites.createInvite(email, StaffRole.ADMIN, null);
+      const token = tokenOf(link);
+      const client = browser(app);
+      const start = await client
+        .post('/staff/invites/accept/start', { token })
+        .expect(200);
+      await client
+        .post('/staff/invites/accept/verify-code', {
+          token,
+          mfaCode: await codeFor(start.body.secret),
+        })
+        .expect(200);
+
+      // The person takes their time on name and password: no new code needed.
+      await prisma.staffInvite.updateMany({
+        where: { email },
+        data: { mfaVerifiedAt: new Date(Date.now() - 10 * 60 * 1000) },
+      });
+
+      await client
+        .post('/staff/invites/accept/complete', {
+          token,
+          name: 'Slow Typist',
+          password: PASSWORD,
+        })
+        .expect(204);
+    });
+
+    it('needs the phone confirmed again after a new QR code', async () => {
+      const email = uniqueEmail('rescan');
+      const { link } = await invites.createInvite(email, StaffRole.ADMIN, null);
+      const token = tokenOf(link);
+      const client = browser(app);
+      const first = await client
+        .post('/staff/invites/accept/start', { token })
+        .expect(200);
+      await client
+        .post('/staff/invites/accept/verify-code', {
+          token,
+          mfaCode: await codeFor(first.body.secret),
+        })
+        .expect(200);
+
+      // Reloading the setup page makes a new QR code.
+      await client.post('/staff/invites/accept/start', { token }).expect(200);
+
+      await client
+        .post('/staff/invites/accept/complete', {
+          token,
+          name: 'Rescanned',
+          password: PASSWORD,
+        })
+        .expect(400);
     });
 
     it('signs the new staff member in; the invite then stops working', async () => {
@@ -124,11 +192,16 @@ describe('Staff accounts (e2e)', () => {
       });
 
       await browser(app)
+        .post('/staff/invites/accept/verify-code', {
+          token,
+          mfaCode: await codeFor(secret, 1),
+        })
+        .expect(400);
+      await browser(app)
         .post('/staff/invites/accept/complete', {
           token,
           name: 'Someone Else',
           password: PASSWORD,
-          mfaCode: await codeFor(secret, 1),
         })
         .expect(400);
     });

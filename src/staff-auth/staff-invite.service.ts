@@ -21,9 +21,12 @@ const INVALID_INVITE = 'This invite link is invalid or has expired.';
 // Staff accounts are only ever created by accepting an invite, so each person
 // sets their own password and MFA and nobody else ever knows them.
 //
-// Accepting is two steps: `startAcceptance` generates the MFA secret and QR
-// code, then `completeAcceptance` checks a code from the app (proving it was
-// set up), sets the password and creates the account.
+// Accepting, in the order the setup page shows it:
+//   1. `startAcceptance` generates the MFA secret and QR code
+//   2. `verifyCode` checks a code from the phone right away (codes only last
+//      about 30 seconds) and records that the phone is set up
+//   3. `completeAcceptance` sets name + password and creates the account,
+//      once the phone is verified
 @Injectable()
 export class StaffInviteService {
   constructor(
@@ -97,9 +100,10 @@ export class StaffInviteService {
     const invite = await this.findUsableInvite(token);
     const secret = newTotpSecret();
 
+    // A new secret means any earlier verification no longer applies.
     await this.prisma.staffInvite.update({
       where: { id: invite.id },
-      data: { mfaSecret: secret },
+      data: { mfaSecret: secret, mfaVerifiedAt: null, mfaLastTimeStep: null },
     });
 
     return {
@@ -110,14 +114,8 @@ export class StaffInviteService {
     };
   }
 
-  // Step 2: returns a session token; the new staff member is signed in.
-  async completeAcceptance(
-    token: string,
-    name: string,
-    password: string,
-    mfaCode: string,
-    meta: RequestMeta,
-  ) {
+  // Step 2: proves the phone has the secret.
+  async verifyCode(token: string, mfaCode: string) {
     const invite = await this.findUsableInvite(token);
     if (!invite.mfaSecret) {
       throw new BadRequestException('Set up your authenticator app first.');
@@ -130,13 +128,36 @@ export class StaffInviteService {
       );
     }
 
+    await this.prisma.staffInvite.update({
+      where: { id: invite.id },
+      data: { mfaVerifiedAt: new Date(), mfaLastTimeStep: timeStep },
+    });
+    return { verified: true };
+  }
+
+  // Step 3: returns a session token; the new staff member is signed in.
+  async completeAcceptance(
+    token: string,
+    name: string,
+    password: string,
+    meta: RequestMeta,
+  ) {
+    const invite = await this.findUsableInvite(token);
+    if (!invite.mfaSecret || !invite.mfaVerifiedAt) {
+      throw new BadRequestException('Confirm the code from your phone first.');
+    }
+
     const passwordHash = await hashPassword(password);
 
     try {
       return await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.staffInvite.updateMany({
           where: { id: invite.id, acceptedAt: null, revokedAt: null },
-          data: { acceptedAt: new Date(), mfaSecret: null },
+          data: {
+            acceptedAt: new Date(),
+            mfaSecret: null,
+            mfaVerifiedAt: null,
+          },
         });
         if (claimed.count !== 1) throw new BadRequestException(INVALID_INVITE);
 
@@ -147,7 +168,7 @@ export class StaffInviteService {
             role: invite.role,
             passwordHash,
             mfaSecret: invite.mfaSecret,
-            mfaLastTimeStep: timeStep,
+            mfaLastTimeStep: invite.mfaLastTimeStep,
           },
           select: { id: true },
         });

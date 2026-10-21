@@ -162,7 +162,7 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 
 **Lade:**
 
-- **Launch blocker:** accept the AWS BAA (Artifact) before any real rider address goes to AWS. The account is on the AWS Free plan, which blocks Artifact; upgrade to the paid plan first (remaining credits carry over).
+- ~~Accept the AWS BAA~~ — done 2026-10-20. The account (created with Google sign-up) needed the paid plan **and** "Activate advanced features" before Artifact worked. Keep the downloaded BAA PDF in Lade's records.
 
 - Sign off on the stretcher rate and no-show / late-cancel fees; update the rate card (add stretcher and no-show / late-cancel fees).
 - Terms of service + privacy notice covering wait time, no-show and late-cancel rules (checkout consent depends on it).
