@@ -110,37 +110,43 @@ export const quoteTrip = (
 
   if (!rates) return { kind: 'call_for_quote', reason: 'NO_RATE' };
 
-  const roundTrip = isRoundTrip(input.tripKind);
-  const baseCents = roundTrip
+  const fare = fareLines(
+    input.tripKind,
+    input.legs.map((leg) => leg.distanceMeters),
+    rates,
+  );
+  return { kind: 'priced', ...fare };
+};
+
+// Base fare + mileage. Round trips bill the total passenger miles of both
+// legs together.
+const fareLines = (
+  tripKind: TripKind,
+  legMeters: number[],
+  rates: Rates,
+): { lines: PriceLine[]; totalCents: number; billableMiles: number } => {
+  const baseCents = isRoundTrip(tripKind)
     ? rates.roundTripBaseCents
     : rates.oneWayBaseCents;
-
-  // Round trips bill the total passenger miles of both legs together.
-  const totalMeters = input.legs.reduce(
-    (sum, leg) => sum + leg.distanceMeters,
-    0,
-  );
+  const totalMeters = legMeters.reduce((sum, meters) => sum + meters, 0);
   const tenths = billableTenths(totalMeters);
   const mileageCents = Math.round((tenths * rates.perMileCents) / 10);
   const miles = tenths / 10;
 
-  const lines: PriceLine[] = [
-    {
-      type: ChargeType.BASE_FARE,
-      description: `Base fare (${TRIP_LABEL[input.tripKind]})`,
-      amountCents: baseCents,
-    },
-    {
-      type: ChargeType.MILEAGE,
-      description: `Mileage: ${miles.toFixed(1)} mi × ${formatCents(rates.perMileCents)}`,
-      quantity: miles,
-      amountCents: mileageCents,
-    },
-  ];
-
   return {
-    kind: 'priced',
-    lines,
+    lines: [
+      {
+        type: ChargeType.BASE_FARE,
+        description: `Base fare (${TRIP_LABEL[tripKind]})`,
+        amountCents: baseCents,
+      },
+      {
+        type: ChargeType.MILEAGE,
+        description: `Mileage: ${miles.toFixed(1)} mi × ${formatCents(rates.perMileCents)}`,
+        quantity: miles,
+        amountCents: mileageCents,
+      },
+    ],
     totalCents: baseCents + mileageCents,
     billableMiles: miles,
   };
@@ -152,6 +158,8 @@ export const quoteTrip = (
 export const waitTimeCharge = (
   waitedMinutes: number,
   rates: Rates,
+  // Which stop, when a trip has more than one, e.g. "ride back".
+  where?: string,
 ): PriceLine | null => {
   if (!Number.isFinite(waitedMinutes) || waitedMinutes < 0) {
     throw new Error(`Invalid waited minutes: ${waitedMinutes}`);
@@ -162,10 +170,51 @@ export const waitTimeCharge = (
   const blocks = Math.ceil(billable / rates.waitIncrementMinutes);
   return {
     type: ChargeType.WAIT_TIME,
-    description: `Waiting time: ${blocks} × ${rates.waitIncrementMinutes} min after a ${rates.waitGraceMinutes}-min grace period`,
+    description: `Waiting time${where ? ` (${where})` : ''}: ${blocks} × ${rates.waitIncrementMinutes} min after a ${rates.waitGraceMinutes}-min grace period`,
     quantity: blocks,
     amountCents: blocks * rates.waitIncrementCents,
   };
+};
+
+// A leg the rider actually rode, with the minutes the driver waited.
+export type RiddenLeg = {
+  distanceMeters: number;
+  waitedMinutes: number | null;
+  label: string; // "ride there" / "ride back"
+  legId?: string; // passed through to that leg's waiting-time line
+};
+
+// What a finished ride costs: base fare + mileage for the legs that
+// happened, plus waiting time. A round trip whose ride back wasn't needed is
+// billed as one-way, with no mileage for the leg that didn't happen.
+export const completedRideCharges = (
+  tripKind: TripKind,
+  ridden: RiddenLeg[],
+  rates: Rates,
+): (PriceLine & { legId?: string })[] => {
+  if (ridden.length === 0 || ridden.length > expectedLegs(tripKind)) {
+    throw new Error(`Invalid number of ridden legs: ${ridden.length}`);
+  }
+  const billedAs =
+    ridden.length < expectedLegs(tripKind) ? TripKind.ONE_WAY : tripKind;
+  const fare = fareLines(
+    billedAs,
+    ridden.map((leg) => leg.distanceMeters),
+    rates,
+  );
+  const waits = ridden.flatMap((leg) => {
+    const line =
+      leg.waitedMinutes === null
+        ? null
+        : waitTimeCharge(
+            leg.waitedMinutes,
+            rates,
+            ridden.length > 1 ? leg.label : undefined,
+          );
+    return line ? [{ ...line, legId: leg.legId }] : [];
+  });
+
+  return [...fare.lines, ...waits];
 };
 
 // Rider not there at pickup (after the grace period). No mileage is ever

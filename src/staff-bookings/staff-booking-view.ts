@@ -6,9 +6,12 @@ import {
 import type {
   ActorType,
   Booking,
+  BookingCharge,
   BookingEvent,
+  ChargeType,
   BookingStatus,
   CareLevel,
+  LegDirection,
   LegStatus,
   Payment,
   PaymentStatus,
@@ -18,6 +21,7 @@ import type {
   TripType,
 } from '../generated/prisma/client.js';
 import type { Address } from '../mileage/address.js';
+import type { StaffActions } from './booking-actions.js';
 
 // One row of the staff booking list: enough to dispatch from, without the
 // notes, requester details and price lines (open the booking for those).
@@ -62,6 +66,18 @@ export type StaffBookingView = Omit<BookingView, 'legs'> & {
   } | null;
   cancelledAt: string | null;
   cancellationReason: string | null;
+  // What the booking owes so far, line by line (what gets charged).
+  charges: {
+    type: ChargeType;
+    leg: LegDirection | null;
+    quantity: number | null; // miles, or 15-minute blocks
+    amountCents: number;
+    note: string | null;
+    staffName: string | null;
+    at: string;
+  }[];
+  chargesTotalCents: number;
+  actions: StaffActions;
   history: {
     fromStatus: BookingStatus | null;
     toStatus: BookingStatus;
@@ -113,10 +129,17 @@ export const toStaffBookingSummary = (
   };
 };
 
+export type StaffBookingRecord = WithLegsAndPayment & {
+  events: (BookingEvent & { staffUser: { name: string } | null })[];
+  charges: (BookingCharge & {
+    leg: { direction: LegDirection } | null;
+    createdBy: { name: string } | null;
+  })[];
+};
+
 export const toStaffBookingView = (
-  booking: WithLegsAndPayment & {
-    events: (BookingEvent & { staffUser: { name: string } | null })[];
-  },
+  booking: StaffBookingRecord,
+  actions: StaffActions,
 ): StaffBookingView => {
   const base = toBookingView(booking);
   // toBookingView sorts the same way, so the legs line up.
@@ -146,6 +169,20 @@ export const toStaffBookingView = (
     },
     cancelledAt: booking.cancelledAt?.toISOString() ?? null,
     cancellationReason: booking.cancellationReason,
+    charges: booking.charges.map((charge) => ({
+      type: charge.type,
+      leg: charge.leg?.direction ?? null,
+      quantity: charge.quantity === null ? null : Number(charge.quantity),
+      amountCents: charge.amountCents,
+      note: charge.note,
+      staffName: charge.createdBy?.name ?? null,
+      at: charge.createdAt.toISOString(),
+    })),
+    chargesTotalCents: booking.charges.reduce(
+      (sum, charge) => sum + charge.amountCents,
+      0,
+    ),
+    actions,
     history: booking.events.map((event) => ({
       fromStatus: event.fromStatus,
       toStatus: event.toStatus,

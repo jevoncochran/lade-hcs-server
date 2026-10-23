@@ -1,5 +1,6 @@
 import { ChargeType, TripKind } from '../generated/prisma/client.js';
 import {
+  completedRideCharges,
   billableTenths,
   lateCancellationCharge,
   METERS_PER_MILE,
@@ -348,5 +349,81 @@ describe('fees', () => {
       description: 'Late cancellation fee',
       amountCents: late,
     });
+  });
+});
+
+describe('completedRideCharges', () => {
+  const ridden = (mi: number, waitedMinutes: number | null, label: string) => ({
+    distanceMeters: miles(mi),
+    waitedMinutes,
+    label,
+  });
+
+  it('bills a finished round trip as booked, plus waiting at each stop', () => {
+    const lines = completedRideCharges(
+      TripKind.ROUND_TRIP,
+      [ridden(10, 20, 'ride there'), ridden(11, null, 'ride back')],
+      WHEELCHAIR,
+    );
+    expect(lines).toEqual([
+      expect.objectContaining({ type: 'BASE_FARE', amountCents: 15000 }),
+      expect.objectContaining({
+        type: 'MILEAGE',
+        quantity: 21,
+        amountCents: 8400,
+      }),
+      {
+        type: 'WAIT_TIME',
+        description:
+          'Waiting time (ride there): 1 × 15 min after a 15-min grace period',
+        quantity: 1,
+        amountCents: 1500,
+      },
+    ]);
+    expect(totalOf(lines)).toBe(15000 + 8400 + 1500);
+  });
+
+  it('bills a round trip without the ride back as one-way', () => {
+    const lines = completedRideCharges(
+      TripKind.ROUND_TRIP,
+      [ridden(10, 40, 'ride there')],
+      WHEELCHAIR,
+    );
+    expect(lines).toEqual([
+      expect.objectContaining({
+        type: 'BASE_FARE',
+        description: 'Base fare (one-way)',
+        amountCents: 7500,
+      }),
+      expect.objectContaining({ type: 'MILEAGE', amountCents: 4000 }),
+      // One stop: no need to say which.
+      expect.objectContaining({
+        type: 'WAIT_TIME',
+        description: 'Waiting time: 2 × 15 min after a 15-min grace period',
+        amountCents: 3000,
+      }),
+    ]);
+  });
+
+  it('adds nothing for waits inside the grace period', () => {
+    const lines = completedRideCharges(
+      TripKind.ONE_WAY,
+      [ridden(5, 15, 'ride there')],
+      AMBULATORY,
+    );
+    expect(lines.map((line) => line.type)).toEqual(['BASE_FARE', 'MILEAGE']);
+  });
+
+  it('refuses impossible leg counts', () => {
+    expect(() =>
+      completedRideCharges(TripKind.ONE_WAY, [], AMBULATORY),
+    ).toThrow();
+    expect(() =>
+      completedRideCharges(
+        TripKind.ONE_WAY,
+        [ridden(1, null, 'a'), ridden(1, null, 'b')],
+        AMBULATORY,
+      ),
+    ).toThrow();
   });
 });

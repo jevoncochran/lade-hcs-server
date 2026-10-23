@@ -3,6 +3,7 @@ import {
   PaymentGateway,
   type CardSetup,
   type CardSetupResult,
+  type ChargeResult,
 } from '../payment-gateway.js';
 
 // Card payments through Stripe. Only our own ids go in metadata, and the
@@ -53,6 +54,54 @@ export class StripePaymentGateway extends PaymentGateway {
     return toResult(await this.stripe.setupIntents.retrieve(setupId));
   }
 
+  async chargeSavedCard(input: {
+    paymentCustomerId: string;
+    paymentMethodId: string;
+    amountCents: number;
+    currency: string;
+    bookingId: string;
+    idempotencyKey: string;
+  }): Promise<ChargeResult> {
+    try {
+      const paymentIntent = await this.stripe.paymentIntents.create(
+        {
+          amount: input.amountCents,
+          currency: input.currency,
+          customer: input.paymentCustomerId,
+          payment_method: input.paymentMethodId,
+          // The customer isn't there: charge now or fail, no 3-D Secure pop-up.
+          off_session: true,
+          confirm: true,
+          metadata: { bookingId: input.bookingId },
+        },
+        { idempotencyKey: input.idempotencyKey },
+      );
+      return paymentIntent.status === 'succeeded'
+        ? { status: 'charged', paymentIntentId: paymentIntent.id }
+        : {
+            status: 'failed',
+            // e.g. requires_action: the bank wants the customer to approve it
+            code: paymentIntent.status,
+            paymentIntentId: paymentIntent.id,
+          };
+    } catch (error) {
+      // Declines come back as card errors; anything else (network, outage)
+      // means we don't know, so let the caller keep it retryable.
+      if (isCardError(error)) {
+        return {
+          status: 'failed',
+          code: error.decline_code ?? error.code ?? 'card_error',
+          paymentIntentId: error.payment_intent?.id ?? null,
+        };
+      }
+      throw error;
+    }
+  }
+
+  async releaseCard(paymentMethodId: string) {
+    await this.stripe.paymentMethods.detach(paymentMethodId);
+  }
+
   // Webhooks can only be checked when a signing secret is configured.
   get acceptsWebhooks() {
     return Boolean(this.webhookSecret);
@@ -71,6 +120,14 @@ export class StripePaymentGateway extends PaymentGateway {
     );
   }
 }
+
+const isCardError = (
+  error: unknown,
+): error is {
+  code?: string;
+  decline_code?: string;
+  payment_intent?: { id: string };
+} => (error as { type?: unknown } | null)?.type === 'StripeCardError';
 
 const toCardSetup = (setupIntent: Stripe.SetupIntent): CardSetup => {
   if (!setupIntent.client_secret) {

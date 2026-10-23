@@ -13,6 +13,7 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { SessionStaff } from '../staff-auth/staff-session.service.js';
+import { staffActions } from './booking-actions.js';
 import type { ListStaffBookingsDto } from './dto/list-staff-bookings.dto.js';
 import {
   toStaffBookingSummary,
@@ -113,29 +114,56 @@ export class StaffBookingsService {
     };
   }
 
-  async get(staff: SessionStaff, id: string, meta: RequestMeta) {
+  // One booking for staff, with the actions allowed right now. No audit
+  // entry: callers record why they loaded it.
+  async detail(id: string, now = new Date()) {
     const booking = await this.prisma.booking.findFirst({
       where: { id, deletedAt: null },
       include: {
         legs: true,
         payments: latestPayment,
+        pricingRule: true,
         events: {
           orderBy: { createdAt: 'asc' },
           include: { staffUser: { select: { name: true } } },
+        },
+        charges: {
+          orderBy: { createdAt: 'asc' },
+          include: {
+            leg: { select: { direction: true } },
+            createdBy: { select: { name: true } },
+          },
         },
       },
     });
     if (!booking) throw new NotFoundException('Booking not found.');
 
+    const outbound = booking.legs.find(
+      (leg) => leg.direction === LegDirection.OUTBOUND,
+    )!;
+    const actions = staffActions({
+      status: booking.status,
+      outboundPickupAt: outbound.pickupAt!,
+      paymentStatus: booking.payments[0]?.status ?? null,
+      rule: booking.pricingRule,
+      lateCancelWindowMinutes: this.config.get('LATE_CANCEL_WINDOW_MINUTES', {
+        infer: true,
+      }),
+      now,
+    });
+    return toStaffBookingView(booking, actions);
+  }
+
+  async get(staff: SessionStaff, id: string, meta: RequestMeta) {
+    const view = await this.detail(id);
     await this.audit.record({
       actorType: ActorType.STAFF,
       staffUserId: staff.id,
       action: 'staff.booking_viewed',
       entityType: 'Booking',
-      entityId: booking.id,
+      entityId: view.id,
       meta,
     });
-
-    return toStaffBookingView(booking);
+    return view;
   }
 }

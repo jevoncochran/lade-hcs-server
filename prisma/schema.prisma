@@ -71,6 +71,7 @@ enum LegStatus {
 enum PaymentStatus {
   CARD_PENDING // SetupIntent created
   CARD_SAVED // card on file, not charged
+  CHARGE_PENDING // charge sent to Stripe; no answer recorded yet (safe to retry)
   CHARGED
   FAILED
   REFUNDED
@@ -251,9 +252,12 @@ model Payment {
   stripePaymentMethodId String?
   stripePaymentIntentId String? @unique
 
-  amountCents   Int
-  refundedCents Int     @default(0)
-  failureCode   String?
+  amountCents    Int
+  refundedCents  Int     @default(0)
+  failureCode    String?
+  // Each new attempt after a failure gets a new Stripe idempotency key;
+  // retrying an unanswered attempt reuses it, so a card is never charged twice.
+  chargeAttempts Int     @default(0)
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)

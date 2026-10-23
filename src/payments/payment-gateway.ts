@@ -33,7 +33,30 @@ export abstract class PaymentGateway {
   // Asks the provider whether the card was saved. Never trust the browser's
   // word for it: this is how the server finds out for itself.
   abstract checkCardSetup(setupId: string): Promise<CardSetupResult>;
+
+  // Charges a saved card without the customer present (after the ride).
+  // The same idempotency key always gives the same result, so a retry after
+  // a lost answer can never charge twice. Throws only when there's no answer
+  // (network, provider outage): the charge may or may not have happened, and
+  // retrying with the same key finds out.
+  abstract chargeSavedCard(input: {
+    paymentCustomerId: string;
+    paymentMethodId: string;
+    amountCents: number;
+    currency: string;
+    bookingId: string;
+    idempotencyKey: string;
+  }): Promise<ChargeResult>;
+
+  // Removes a saved card that won't be charged (e.g. a declined request).
+  abstract releaseCard(paymentMethodId: string): Promise<void>;
 }
+
+export type ChargeResult =
+  | { status: 'charged'; paymentIntentId: string }
+  // Declined, or the bank wants the customer to approve it (3-D Secure).
+  // `code` is the provider's short reason, e.g. "card_declined".
+  | { status: 'failed'; code: string; paymentIntentId: string | null };
 
 export type CardSetup = { id: string; clientSecret: string };
 

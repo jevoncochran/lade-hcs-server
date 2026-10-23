@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Stripe from 'stripe';
 import type { Env } from '../config/env.validation.js';
+import { BookingPaymentsService } from './booking-payments.service.js';
 import { PaymentGateway } from './payment-gateway.js';
 import { FakePaymentGateway } from './providers/fake-payment.gateway.js';
 import { StripePaymentGateway } from './providers/stripe-payment.gateway.js';
@@ -23,7 +24,8 @@ import { StripePaymentGateway } from './providers/stripe-payment.gateway.js';
         );
       },
     },
+    BookingPaymentsService,
   ],
-  exports: [PaymentGateway],
+  exports: [PaymentGateway, BookingPaymentsService],
 })
 export class PaymentsModule {}
