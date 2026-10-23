@@ -1,11 +1,14 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
+import { generate } from 'otplib';
 import request from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
+import { StaffRole } from '../src/generated/prisma/client.js';
 import { LogMailer, Mailer } from '../src/mail/mailer.js';
 import { PrismaService } from '../src/prisma/prisma.service.js';
+import { StaffInviteService } from '../src/staff-auth/staff-invite.service.js';
 
 export const SITE_URL = 'http://localhost:3000';
 
@@ -112,5 +115,36 @@ export const signedInCustomer = async (
     .post('/auth/verify-email', { token: tokenFromLastEmail(mailer, email) })
     .expect(200);
   await client.post('/auth/login', { email, password }).expect(204);
+  return client;
+};
+
+// Invites and sets up a new staff member (as the setup page does); returns
+// their signed-in browser.
+export const signedInStaff = async (
+  app: INestApplication<App>,
+  role: StaffRole = StaffRole.DISPATCHER,
+) => {
+  const { link } = await app
+    .get(StaffInviteService)
+    .createInvite(uniqueEmail('staff'), role, null);
+  const token = new URL(link).searchParams.get('token')!;
+  const client = browser(app);
+
+  const start = await client
+    .post('/staff/invites/accept/start', { token })
+    .expect(200);
+  await client
+    .post('/staff/invites/accept/verify-code', {
+      token,
+      mfaCode: await generate({ secret: start.body.secret }),
+    })
+    .expect(200);
+  await client
+    .post('/staff/invites/accept/complete', {
+      token,
+      name: 'Dispatch Desk',
+      password: 'staff passphrase 123',
+    })
+    .expect(204);
   return client;
 };

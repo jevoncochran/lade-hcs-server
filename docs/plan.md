@@ -125,11 +125,12 @@ Customers must create an account to book (decided 2026-10-09). Guest booking may
 ## Staff auth
 
 - Accounts are only created by accepting an invite (48h, one-time link). The first ones come from the bootstrap command: `npm run staff:invite -- --email <email> --role ADMIN`. Later, admins invite from `/admin`.
-- Accepting: get an authenticator QR code, then set name + password and confirm a 6-digit code. Nobody else ever knows the password or MFA secret.
+- Accepting: scan the authenticator QR code and confirm a 6-digit code first (checked right away), then set name + password. Nobody else ever knows the password or MFA secret.
 - Login: email + password + TOTP code (required). Used codes can't be replayed. 5 failures → 15-minute lock.
 - Sessions: server-side, httpOnly `lade_staff_sid` cookie (separate from customers); end after 15 minutes idle (HIPAA automatic logoff), 12 hours, or when the account is deactivated.
 - Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections. Initial admins: Jevon and the two owners.
-- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
+- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/verify-code`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
+- Viewing bookings (dispatchers and admins): `GET /staff/bookings` lists by outbound pickup time (`sort=pickup`, default) or `sort=newest`, filtered by `status` (default: all but `PENDING_PAYMENT`), pickup days `from`/`to` (YYYY-MM-DD in `BUSINESS_TIMEZONE`, inclusive; with no dates and no search, today onward), exact `reference` or exact `riderLastName` (blind index), paged (`page`, `pageSize` ≤ 100). Rows are summaries; `GET /staff/bookings/:id` adds requester, payment, leg progress and status history. Both are `no-store` and every view is audited (`staff.bookings_listed` with the booking ids, `staff.booking_viewed`), without PHI.
 - Admin screens live at `/admin` in the Next.js site, never cached, `noindex`.
 
 ## Request security

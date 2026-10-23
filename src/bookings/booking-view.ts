@@ -50,15 +50,19 @@ export type PriceSnapshot = {
   distanceIsEstimate?: boolean;
 };
 
+// Outbound first, then the ride back.
+export const sortLegs = <Leg extends Pick<TripLeg, 'direction'>>(
+  legs: Leg[],
+): Leg[] => {
+  const order = { OUTBOUND: 0, RETURN: 1 } as const;
+  return [...legs].sort((a, b) => order[a.direction] - order[b.direction]);
+};
+
 export const toBookingView = (
   booking: Booking & { legs: TripLeg[] },
 ): BookingView => {
   const snapshot = booking.priceBreakdown as PriceSnapshot;
-  // Outbound first, then the ride back.
-  const order = { OUTBOUND: 0, RETURN: 1 } as const;
-  const legs = [...booking.legs].sort(
-    (a, b) => order[a.direction] - order[b.direction],
-  );
+  const legs = sortLegs(booking.legs);
 
   return {
     id: booking.id,

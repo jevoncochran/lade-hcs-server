@@ -16,6 +16,7 @@ import { PrismaModule } from './prisma/prisma.module.js';
 import { QuotesModule } from './quotes/quotes.module.js';
 import { StripeWebhookModule } from './payments/stripe-webhook.module.js';
 import { StaffAuthModule } from './staff-auth/staff-auth.module.js';
+import { StaffBookingsModule } from './staff-bookings/staff-bookings.module.js';
 
 @Module({
   imports: [
@@ -38,6 +39,7 @@ import { StaffAuthModule } from './staff-auth/staff-auth.module.js';
     HealthModule,
     CustomerAuthModule,
     StaffAuthModule,
+    StaffBookingsModule,
     QuotesModule,
     BookingsModule,
     StripeWebhookModule,
