@@ -417,6 +417,108 @@ describe('Staff booking actions (e2e)', () => {
     });
   });
 
+  describe('emails', () => {
+    // Emails about a booking, by its reference (in every subject).
+    const emailsFor = async (id: string) => {
+      const { reference } = await prisma.booking.findUniqueOrThrow({
+        where: { id },
+      });
+      return mailer.sent.filter((m) => m.subject.includes(reference));
+    };
+
+    it('tells the customer and every active staff member about a new request', async () => {
+      const id = await book();
+      const sent = await emailsFor(id);
+
+      expect(sent.map((m) => m.subject)).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/^We received your ride request LD-/),
+          expect.stringMatching(/^New ride request LD-/),
+        ]),
+      );
+      const staffAlert = sent.find((m) => m.subject.startsWith('New ride'))!;
+      expect(staffAlert.text).toContain(`/admin/bookings/${id}`);
+
+      // Saving the card again (website and webhook both) sends nothing new.
+      await customer.post(`/bookings/${id}/confirm-card`).expect(200);
+      expect(await emailsFor(id)).toHaveLength(sent.length);
+    });
+
+    it('confirms, and says a free cancellation is free', async () => {
+      const id = await confirmed();
+      await staff
+        .post(`/staff/bookings/${id}/cancel`, { reason: 'Rider is better' })
+        .expect(200);
+      const subjects = (await emailsFor(id)).map((m) => m.subject);
+      expect(subjects).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/is confirmed$/),
+          expect.stringMatching(/was cancelled$/),
+        ]),
+      );
+      const cancelled = (await emailsFor(id)).find((m) =>
+        m.subject.endsWith('was cancelled'),
+      )!;
+      expect(cancelled.text).toContain("You haven't been charged.");
+    });
+
+    it('mentions a late-cancel fee that was charged', async () => {
+      const id = await confirmed();
+      await pickupIn(id, 30);
+      await staff
+        .post(`/staff/bookings/${id}/cancel`, { reason: 'Changed plans' })
+        .expect(200);
+      const cancelled = (await emailsFor(id)).find((m) =>
+        m.subject.endsWith('was cancelled'),
+      )!;
+      expect(cancelled.text).toContain(
+        'late-cancellation fee of $37.50 was charged',
+      );
+    });
+
+    it('sends a receipt, or a decline notice and then a receipt on retry', async () => {
+      const id = await confirmed();
+      await pickupIn(id, -60);
+      await prisma.payment.updateMany({
+        where: { bookingId: id },
+        data: { stripePaymentMethodId: FAKE_DECLINED_CARD },
+      });
+      await staff.post(`/staff/bookings/${id}/complete`, {}).expect(200);
+      const total = ONE_WAY + 10 * PER_MILE;
+
+      let subjects = (await emailsFor(id)).map((m) => m.subject);
+      expect(subjects).toContainEqual(
+        expect.stringMatching(/^We couldn't charge your card/),
+      );
+      expect(subjects).not.toContainEqual(expect.stringMatching(/^Receipt/));
+
+      await prisma.payment.updateMany({
+        where: { bookingId: id },
+        data: { stripePaymentMethodId: 'fake_pm_test_card' },
+      });
+      await staff.post(`/staff/bookings/${id}/retry-charge`).expect(200);
+      const receipt = (await emailsFor(id)).find((m) =>
+        m.subject.startsWith('Receipt'),
+      )!;
+      expect(receipt.text).toContain(`$${(total / 100).toFixed(2)}`);
+      subjects = (await emailsFor(id)).map((m) => m.subject);
+      expect(subjects.filter((x) => x.startsWith('Receipt'))).toHaveLength(1);
+    });
+
+    it('never includes rider names, addresses or the cancellation reason', async () => {
+      const id = await confirmed({
+        requesterRelationship: 'FAMILY_CAREGIVER',
+        riderFirstName: 'Robin',
+        riderLastName: 'Okafor',
+      });
+      await staff
+        .post(`/staff/bookings/${id}/cancel`, { reason: 'Dialysis moved' })
+        .expect(200);
+      const all = JSON.stringify(await emailsFor(id));
+      expect(all).not.toMatch(/robin|okafor|dana|smith|palm|clinic|dialysis/i);
+    });
+  });
+
   describe('audit log', () => {
     it('records each action without the reasons (PHI)', async () => {
       const id = await book();

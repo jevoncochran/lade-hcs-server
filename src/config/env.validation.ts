@@ -1,5 +1,6 @@
-import { plainToInstance, Type } from 'class-transformer';
+import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
+  IsEmail,
   IsEnum,
   IsIn,
   IsOptional,
@@ -59,10 +60,32 @@ export class Env {
   @IsString()
   TERMS_VERSION = '2026-10-draft';
 
-  // "log" prints emails to the server log (development and tests only).
-  // Amazon SES is added before launch.
-  @IsIn(['log'])
+  // "log" prints emails to the server log (development and tests only);
+  // "ses" sends them with Amazon SES (covered by the AWS BAA) in AWS_REGION.
+  @IsIn(['log', 'ses'])
   MAIL_TRANSPORT = 'log';
+
+  // Sender of every email. Its domain must be verified in SES.
+  @IsString()
+  MAIL_FROM = 'Lade Health Care Services <no-reply@ladehcs.com>';
+
+  // Where replies go (no-reply@ can't receive mail). Optional.
+  @Transform(({ value }: { value: unknown }) =>
+    value === '' ? undefined : value,
+  )
+  @IsOptional()
+  @IsEmail()
+  MAIL_REPLY_TO?: string;
+
+  // Access key of an IAM user allowed only ses:SendEmail. Leave both empty
+  // when the server runs on AWS with a role that may send.
+  @IsOptional()
+  @IsString()
+  SES_ACCESS_KEY_ID?: string;
+
+  @IsOptional()
+  @IsString()
+  SES_SECRET_ACCESS_KEY?: string;
 
   // "estimate" guesses distances from ZIP codes (development and tests
   // only, no address autofill); "aws" uses Amazon Location Service for real
@@ -70,7 +93,8 @@ export class Env {
   @IsIn(['estimate', 'aws'])
   MILEAGE_PROVIDER = 'estimate';
 
-  // Amazon Location Service (when MILEAGE_PROVIDER is "aws"). An API key
+  // AWS_REGION: where SES and Amazon Location Service are used.
+  // Amazon Location Service (when MILEAGE_PROVIDER is "aws"): an API key
   // limited to Places (Autocomplete, GetPlace, Geocode) and Routes
   // (CalculateRoutes), with no referrer restriction. Real rider addresses
   // must not be sent until the AWS BAA is accepted.
@@ -152,6 +176,7 @@ export class Env {
 const SECRET_SETTINGS = new Set([
   'DATABASE_URL',
   'AWS_LOCATION_API_KEY',
+  'SES_SECRET_ACCESS_KEY',
   'STRIPE_SECRET_KEY',
   'STRIPE_WEBHOOK_SECRET',
   'ENCRYPTION_KEYS',
@@ -207,6 +232,13 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
   if (!cryptoHasError) {
     messages.push(
       ...checkCryptoSettings(env).map((problem) => `  - ${problem}`),
+    );
+  }
+
+  // An empty value (e.g. "SES_ACCESS_KEY_ID=" in .env) means not set.
+  if (Boolean(env.SES_ACCESS_KEY_ID) !== Boolean(env.SES_SECRET_ACCESS_KEY)) {
+    messages.push(
+      '  - SES_ACCESS_KEY_ID and SES_SECRET_ACCESS_KEY go together: set both or neither',
     );
   }
 

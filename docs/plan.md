@@ -120,6 +120,8 @@ Customers must create an account to book (decided 2026-10-09). Guest booking may
 - Password reset: 1-hour one-time link; signs out every session.
 - Email, first name, last name and phone are encrypted (being a Lade customer is PHI); lookup via `emailHash`.
 - Endpoints: `POST /auth/signup`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/login`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password`; `GET /auth/me`.
+- My rides: `GET /bookings` and `GET /bookings/:id` return each ride with leg progress, final charges (no staff notes), payment status and `cancel: { allowed, feeCents }`. Website: `/my-rides` (upcoming / past) and `/my-rides/<id>`.
+- Customer cancellation: `POST /bookings/:id/cancel` `{ reason?, acceptedFeeCents? }`. Allowed for REQUESTED or CONFIRMED rides until the pickup time (after that: call). Free for requests and until `LATE_CANCEL_WINDOW_MINUTES` before a confirmed pickup; then the late-cancellation fee, charged only if `acceptedFeeCents` covers it (otherwise 409 with the fee, so nobody pays a fee they didn't see). Emails the customer and all active staff. Shared with staff cancellation: `src/bookings/booking-status.ts`.
 - The "manage your ride" link for guests (`Booking.manageToken*`) waits until guest booking is built.
 
 ## Staff auth
@@ -149,10 +151,14 @@ Customers must create an account to book (decided 2026-10-09). Guest booking may
 
 ## Notifications (phases 1–3)
 
-PHI-free only:
+Email goes through the `Mailer` token: `LogMailer` (`MAIL_TRANSPORT=log`, prints to the log; development and tests) or `SesMailer` (`MAIL_TRANSPORT=ses`, Amazon SES v2 in `AWS_REGION`, us-east-2 / Ohio, where `ladehcs.com` is verified). Sender `MAIL_FROM` (default `Lade Health Care Services <no-reply@ladehcs.com>`), optional `MAIL_REPLY_TO`. Credentials: `SES_ACCESS_KEY_ID` / `SES_SECRET_ACCESS_KEY` of an IAM user allowed only `ses:SendEmail` (local and non-AWS hosting); empty on AWS hosting with a role. Recipient addresses never go in logs.
 
-- Staff alert: "New booking LD-7K3Q9 — log in to view."
-- Customer: confirmation / cancellation with the manage link; payment-failed with a pay link. No names, addresses, medical details.
+Booking emails (`src/notifications/booking-notifications.service.ts`, texts in `src/mail/booking-templates.ts`) carry only the booking reference, amounts and links: no names, addresses, times or medical details. A failed email is logged with the booking id and never blocks the booking change.
+
+- Card saved (once, website or webhook): customer "request received"; every active staff member "New ride request LD-…" with a link to the booking.
+- Staff confirm / cancel / no-show / complete: customer email; fees say whether the card was charged. Completed + charged → receipt. A declined charge → "we couldn't charge your card" with a link to /contact. Retry that succeeds → receipt.
+
+Before launch: SES production access (out of the sandbox), a real reply-to inbox (ladehcs.com has no MX records), SES bounce/complaint handling (configuration set + notifications).
 
 ## Schema
 
@@ -172,6 +178,11 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 **Lade:**
 
 - ~~Accept the AWS BAA~~ — done 2026-10-20. The account (created with Google sign-up) needed the paid plan **and** "Activate advanced features" before Artifact worked. Keep the downloaded BAA PDF in Lade's records.
+- **Launch blocker:** accept the **Google Workspace BAA**. Lade's email (info@ladehcs.com) runs on Google Workspace, and it's the reply-to address of every email the site sends, so customer replies (which can include rider or medical details) land there. Free, paid Workspace plans only: admin.google.com → Account → Account settings → Legal and compliance → accept the HIPAA Business Associate Amendment.
+- **Launch blocker:** add two DNS records at Network Solutions (where ladehcs.com's DNS is), so Lade's emails don't go to spam. As of 2026-10-23 the domain has neither:
+  - SPF, a TXT record on `ladehcs.com`: `v=spf1 include:_spf.google.com include:amazonses.com ~all` (Google Workspace and Amazon SES may send as ladehcs.com). Only one SPF record per domain: merge with any existing one.
+  - DMARC, a TXT record on `_dmarc.ladehcs.com`: `v=DMARC1; p=none; rua=mailto:info@ladehcs.com` (monitor-only, reports to info@; tighten later).
+  - Check afterwards: `dig +short TXT ladehcs.com` and `dig +short TXT _dmarc.ladehcs.com`.
 
 - Sign off on the stretcher rate and no-show / late-cancel fees; update the rate card (add stretcher and no-show / late-cancel fees).
 - Terms of service + privacy notice covering wait time, no-show and late-cancel rules (checkout consent depends on it).

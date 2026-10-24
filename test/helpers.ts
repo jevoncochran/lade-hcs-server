@@ -2,7 +2,7 @@ import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { generate } from 'otplib';
-import request from 'supertest';
+import request, { type Test as Request } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
 import { StaffRole } from '../src/generated/prisma/client.js';
@@ -93,6 +93,19 @@ export const resetBookingTables = async (prisma: PrismaService) => {
 export const uniqueEmail = (label: string) =>
   `${label}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}@example.com`;
 
+// Awaits a request and checks its status. On a mismatch the error names the
+// step and includes the response body (test data only), so a rare failure
+// explains itself instead of just "expected 200, got 400".
+export const step = async (name: string, req: Request, status: number) => {
+  const response = await req;
+  if (response.status !== status) {
+    throw new Error(
+      `${name}: expected ${status}, got ${response.status} ${JSON.stringify(response.body)}`,
+    );
+  }
+  return response;
+};
+
 // Signs up, verifies and signs in a new customer; returns their browser.
 export const signedInCustomer = async (
   app: INestApplication<App>,
@@ -101,20 +114,30 @@ export const signedInCustomer = async (
   const email = uniqueEmail('customer');
   const password = 'customer passphrase';
   const client = browser(app);
-  await client
-    .post('/auth/signup', {
+  await step(
+    'customer sign-up',
+    client.post('/auth/signup', {
       firstName: 'Dana',
       lastName: 'Smith',
       email,
       phone: '813-555-0100',
       password,
       acceptTerms: true,
-    })
-    .expect(202);
-  await client
-    .post('/auth/verify-email', { token: tokenFromLastEmail(mailer, email) })
-    .expect(200);
-  await client.post('/auth/login', { email, password }).expect(204);
+    }),
+    202,
+  );
+  await step(
+    'customer email verification',
+    client.post('/auth/verify-email', {
+      token: tokenFromLastEmail(mailer, email),
+    }),
+    200,
+  );
+  await step(
+    'customer sign-in',
+    client.post('/auth/login', { email, password }),
+    204,
+  );
   return client;
 };
 
@@ -130,21 +153,25 @@ export const signedInStaff = async (
   const token = new URL(link).searchParams.get('token')!;
   const client = browser(app);
 
-  const start = await client
-    .post('/staff/invites/accept/start', { token })
-    .expect(200);
-  await client
-    .post('/staff/invites/accept/verify-code', {
-      token,
-      mfaCode: await generate({ secret: start.body.secret }),
-    })
-    .expect(200);
-  await client
-    .post('/staff/invites/accept/complete', {
+  const start = await step(
+    'staff invite start',
+    client.post('/staff/invites/accept/start', { token }),
+    200,
+  );
+  const mfaCode = await generate({ secret: start.body.secret });
+  await step(
+    `staff invite code ${mfaCode}`,
+    client.post('/staff/invites/accept/verify-code', { token, mfaCode }),
+    200,
+  );
+  await step(
+    'staff invite complete',
+    client.post('/staff/invites/accept/complete', {
       token,
       name: 'Dispatch Desk',
       password: 'staff passphrase 123',
-    })
-    .expect(204);
+    }),
+    204,
+  );
   return client;
 };

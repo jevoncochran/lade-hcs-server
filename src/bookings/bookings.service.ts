@@ -9,6 +9,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { randomUUID } from 'node:crypto';
 import { AuditService } from '../audit/audit.service.js';
+import { BookingNotificationsService } from '../notifications/booking-notifications.service.js';
 import type { RequestMeta } from '../common/decorators/req-meta.decorator.js';
 import type { Env } from '../config/env.validation.js';
 import type { SessionCustomer } from '../customer-auth/customer-session.service.js';
@@ -27,8 +28,9 @@ import {
   MileageService,
   type MeasuredLeg,
 } from '../mileage/mileage.service.js';
+import { BookingPaymentsService } from '../payments/booking-payments.service.js';
 import { PaymentGateway } from '../payments/payment-gateway.js';
-import type { PriceLine } from '../pricing/pricing.js';
+import { formatCents, type PriceLine } from '../pricing/pricing.js';
 import { PricingService } from '../pricing/pricing.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import {
@@ -37,12 +39,37 @@ import {
   type QuoteReason,
 } from '../quotes/quotes.service.js';
 import { newBookingReference } from './booking-reference.js';
-import { toBookingView, type PriceSnapshot } from './booking-view.js';
+import { cancelBooking, lateCancelFee } from './booking-status.js';
+import {
+  sortLegs,
+  toBookingView,
+  toCustomerRideView,
+  type CustomerRideRecord,
+  type CustomerRideView,
+  type PriceSnapshot,
+} from './booking-view.js';
+import type { CancelRideDto } from './dto/cancel-ride.dto.js';
 import type { CreateBookingDto } from './dto/create-booking.dto.js';
 
 const HOUR_MS = 60 * 60 * 1000;
 const MAX_APPOINTMENT_AFTER_PICKUP_MS = 12 * HOUR_MS;
 const REFERENCE_ATTEMPTS = 3;
+
+// Statuses a customer can still cancel from.
+const CANCELLABLE: BookingStatus[] = [
+  BookingStatus.REQUESTED,
+  BookingStatus.CONFIRMED,
+];
+
+const rideInclude = {
+  legs: true,
+  pricingRule: true,
+  payments: { orderBy: { createdAt: 'desc' }, take: 1 },
+  charges: {
+    orderBy: { createdAt: 'asc' },
+    include: { leg: { select: { direction: true } } },
+  },
+} satisfies Prisma.BookingInclude;
 
 type TripTimes = {
   pickupAt: Date;
@@ -64,7 +91,9 @@ export class BookingsService {
     private readonly pricing: PricingService,
     private readonly quotes: QuotesService,
     private readonly payments: PaymentGateway,
+    private readonly bookingPayments: BookingPaymentsService,
     private readonly audit: AuditService,
+    private readonly notifications: BookingNotificationsService,
     private readonly config: ConfigService<Env, true>,
   ) {}
 
@@ -171,12 +200,14 @@ export class BookingsService {
     actor: { actorType: ActorType; customerId?: string },
     meta?: RequestMeta,
   ) {
-    return this.prisma.$transaction(async (tx) => {
+    const { booking, changed } = await this.prisma.$transaction(async (tx) => {
       const booking = await tx.booking.findUniqueOrThrow({
         where: { id: bookingId },
         include: { legs: true },
       });
-      if (booking.status !== BookingStatus.PENDING_PAYMENT) return booking;
+      if (booking.status !== BookingStatus.PENDING_PAYMENT) {
+        return { booking, changed: false };
+      }
 
       await tx.payment.updateMany({
         where: { bookingId, status: PaymentStatus.CARD_PENDING },
@@ -209,8 +240,12 @@ export class BookingsService {
         },
         tx,
       );
-      return updated;
+      return { booking: updated, changed: true };
     });
+
+    // Once only, even when the website and the Stripe webhook both report it.
+    if (changed) await this.notifications.requestReceived(bookingId);
+    return booking;
   }
 
   // The website calls this after the customer finishes the card form. We
@@ -264,10 +299,13 @@ export class BookingsService {
         // Checkouts where the card was never saved aren't real bookings yet.
         status: { not: BookingStatus.PENDING_PAYMENT },
       },
-      include: { legs: true },
+      include: rideInclude,
       orderBy: { createdAt: 'desc' },
     });
-    return bookings.map(toBookingView);
+    const now = new Date();
+    return bookings.map((booking) =>
+      toCustomerRideView(booking, this.cancelOption(booking, now)),
+    );
   }
 
   async get(customer: SessionCustomer, id: string) {
@@ -275,10 +313,80 @@ export class BookingsService {
       // Someone else's booking is "not found", never "forbidden": don't
       // confirm it exists.
       where: { id, customerId: customer.id, deletedAt: null },
-      include: { legs: true },
+      include: rideInclude,
     });
     if (!booking) throw new NotFoundException('Booking not found.');
-    return toBookingView(booking);
+    return toCustomerRideView(booking, this.cancelOption(booking, new Date()));
+  }
+
+  // The customer cancelling their own ride: free until 2 hours before a
+  // confirmed pickup (or any time before Lade confirms), then the
+  // late-cancellation fee. Not after the pickup time: then they call.
+  async cancel(
+    customer: SessionCustomer,
+    id: string,
+    dto: CancelRideDto,
+    meta: RequestMeta,
+  ) {
+    const actor = { actorType: ActorType.CUSTOMER, customerId: customer.id };
+
+    await this.prisma.$transaction(async (tx) => {
+      const booking = await tx.booking.findFirst({
+        where: { id, customerId: customer.id, deletedAt: null },
+        include: rideInclude,
+      });
+      if (!booking) throw new NotFoundException('Booking not found.');
+
+      const option = this.cancelOption(booking, new Date());
+      if (!option.allowed) {
+        throw new ConflictException(
+          CANCELLABLE.includes(booking.status)
+            ? 'Your pickup time has passed. Please call us to make changes.'
+            : "This ride can't be cancelled anymore.",
+        );
+      }
+      if (
+        option.feeCents !== null &&
+        (dto.acceptedFeeCents ?? 0) < option.feeCents
+      ) {
+        throw new ConflictException(
+          `It's now less than 2 hours before pickup, so cancelling costs a late-cancellation fee of ${formatCents(option.feeCents)}. Please confirm again.`,
+        );
+      }
+
+      await cancelBooking(tx, this.audit, {
+        booking,
+        actor,
+        action: 'booking.cancelled_by_customer',
+        meta,
+        reason: dto.reason || undefined,
+        feeCents: option.feeCents,
+      });
+    });
+
+    // The fee, if any; otherwise this lets go of the saved card.
+    await this.bookingPayments.chargeBooking(id, actor, meta);
+    await this.notifications.cancelledByCustomer(id);
+    return this.get(customer, id);
+  }
+
+  private cancelOption(
+    booking: CustomerRideRecord & { pricingRule: PricingRule },
+    now: Date,
+  ): CustomerRideView['cancel'] {
+    const pickupAt = sortLegs(booking.legs)[0].pickupAt!;
+    return {
+      allowed: CANCELLABLE.includes(booking.status) && now < pickupAt,
+      feeCents: lateCancelFee({
+        status: booking.status,
+        outboundPickupAt: pickupAt,
+        lateCancelFeeCents: booking.pricingRule.lateCancelFeeCents,
+        windowMinutes: this.config.get('LATE_CANCEL_WINDOW_MINUTES', {
+          infer: true,
+        }),
+        now,
+      }),
+    };
   }
 
   // ---------- Checks ----------

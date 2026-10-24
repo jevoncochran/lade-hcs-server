@@ -17,6 +17,14 @@ import {
   LegStatus,
   type Prisma,
 } from '../generated/prisma/client.js';
+import {
+  BookingNotificationsService,
+  type StaffAction,
+} from '../notifications/booking-notifications.service.js';
+import {
+  cancelBooking,
+  transitionBooking,
+} from '../bookings/booking-status.js';
 import { BookingPaymentsService } from '../payments/booking-payments.service.js';
 import { completedRideCharges, type RiddenLeg } from '../pricing/pricing.js';
 import { PrismaService } from '../prisma/prisma.service.js';
@@ -27,7 +35,10 @@ import type { CompleteBookingDto } from './dto/complete-booking.dto.js';
 import { StaffBookingsService } from './staff-bookings.service.js';
 
 // The encrypted client or a transaction on it.
-type Db = Pick<PrismaService, 'booking' | 'bookingEvent' | 'auditLog'>;
+type Db = Pick<
+  PrismaService,
+  'booking' | 'bookingEvent' | 'auditLog' | 'tripLeg' | 'bookingCharge'
+>;
 
 const loadInclude = {
   legs: true,
@@ -47,6 +58,7 @@ export class StaffBookingActionsService {
     private readonly prisma: PrismaService,
     private readonly audit: AuditService,
     private readonly payments: BookingPaymentsService,
+    private readonly notifications: BookingNotificationsService,
     private readonly bookings: StaffBookingsService,
     private readonly config: ConfigService<Env, true>,
   ) {}
@@ -57,7 +69,7 @@ export class StaffBookingActionsService {
       if (!actions.confirm) throw notNow(booking.status, 'confirmed');
       await this.transition(tx, booking, BookingStatus.CONFIRMED, staff, meta);
     });
-    return this.bookings.detail(id);
+    return this.finish(id, 'confirmed');
   }
 
   async cancel(
@@ -73,44 +85,22 @@ export class StaffBookingActionsService {
     await this.prisma.$transaction(async (tx) => {
       const { booking, actions } = await this.load(tx, id);
       if (!actions.cancel.allowed) throw notNow(booking.status, 'cancelled');
-      const fee = actions.cancel.feeCents;
-      const waived = fee !== null && dto.waiveFee === true;
-
-      await this.transition(tx, booking, BookingStatus.CANCELLED, staff, meta, {
-        data: { cancelledAt: new Date(), cancellationReason: dto.reason },
-        note: dto.reason,
-        metadata: { lateCancelFee: fee !== null, feeWaived: waived },
+      await cancelBooking(tx, this.audit, {
+        booking,
+        actor: actorOf(staff),
+        action: 'staff.booking_cancelled',
+        meta,
+        reason: dto.reason,
+        feeCents: actions.cancel.feeCents,
+        waiver: dto.waiveFee
+          ? { reason: dto.waiveReason!, staffUserId: staff.id }
+          : undefined,
       });
-      await tx.tripLeg.updateMany({
-        where: { bookingId: id, status: LegStatus.SCHEDULED },
-        data: { status: LegStatus.CANCELLED },
-      });
-      if (fee !== null) {
-        await tx.bookingCharge.create({
-          data: {
-            bookingId: id,
-            type: ChargeType.LATE_CANCELLATION,
-            amountCents: fee,
-            createdById: staff.id,
-          },
-        });
-      }
-      if (waived) {
-        await tx.bookingCharge.create({
-          data: {
-            bookingId: id,
-            type: ChargeType.ADJUSTMENT,
-            amountCents: -fee,
-            note: dto.waiveReason,
-            createdById: staff.id,
-          },
-        });
-      }
     });
 
     // The fee, if any; otherwise this lets go of the saved card.
     await this.payments.chargeBooking(id, actorOf(staff), meta);
-    return this.bookings.detail(id);
+    return this.finish(id, 'cancelled');
   }
 
   async noShow(staff: SessionStaff, id: string, meta: RequestMeta) {
@@ -148,7 +138,7 @@ export class StaffBookingActionsService {
     });
 
     await this.payments.chargeBooking(id, actorOf(staff), meta);
-    return this.bookings.detail(id);
+    return this.finish(id, 'no_show');
   }
 
   async complete(
@@ -238,7 +228,7 @@ export class StaffBookingActionsService {
     });
 
     await this.payments.chargeBooking(id, actorOf(staff), meta);
-    return this.bookings.detail(id);
+    return this.finish(id, 'completed');
   }
 
   // After a declined charge (e.g. the customer added funds) or one that got
@@ -257,6 +247,12 @@ export class StaffBookingActionsService {
       meta,
     });
     await this.payments.chargeBooking(id, actorOf(staff), meta);
+    return this.finish(id, 'charge_retried');
+  }
+
+  // Emails the customer about what happened, then returns the booking.
+  private async finish(id: string, action: StaffAction) {
+    await this.notifications.afterStaffAction(id, action);
     return this.bookings.detail(id);
   }
 
@@ -280,53 +276,22 @@ export class StaffBookingActionsService {
     return { booking, actions };
   }
 
-  // Changes the status only if nobody else changed it first (two staff
-  // pressing buttons at once), then records history and the audit entry.
-  private async transition(
+  private transition(
     tx: Db,
     booking: Loaded,
     to: BookingStatus,
     staff: SessionStaff,
     meta: RequestMeta,
-    extra: {
-      data?: Prisma.BookingUpdateManyMutationInput;
-      note?: string;
-      metadata?: Prisma.InputJsonValue;
-    } = {},
+    extra: { metadata?: Record<string, Prisma.InputJsonValue | null> } = {},
   ) {
-    const { count } = await tx.booking.updateMany({
-      where: { id: booking.id, status: booking.status },
-      data: { ...extra.data, status: to },
+    return transitionBooking(tx, this.audit, {
+      booking,
+      to,
+      actor: actorOf(staff),
+      action: `staff.booking_${to.toLowerCase()}`,
+      meta,
+      metadata: extra.metadata,
     });
-    if (count === 0) {
-      throw new ConflictException(
-        'Someone else just changed this booking. Reload to see the latest.',
-      );
-    }
-    await tx.bookingEvent.create({
-      data: {
-        bookingId: booking.id,
-        fromStatus: booking.status,
-        toStatus: to,
-        actorType: ActorType.STAFF,
-        staffUserId: staff.id,
-        note: extra.note,
-      },
-    });
-    // Status names and amounts only: the reason (PHI) stays in the
-    // encrypted history note.
-    await this.audit.record(
-      {
-        actorType: ActorType.STAFF,
-        staffUserId: staff.id,
-        action: `staff.booking_${to.toLowerCase()}`,
-        entityType: 'Booking',
-        entityId: booking.id,
-        metadata: { from: booking.status, ...(extra.metadata as object) },
-        meta,
-      },
-      tx,
-    );
   }
 }
 

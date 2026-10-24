@@ -2,8 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 
 export type MailMessage = { to: string; subject: string; text: string };
 
-// Injection token for sending email. Implementations: LogMailer now; Amazon
-// SES (under the AWS BAA) before launch, chosen by MAIL_TRANSPORT.
+// Injection token for sending email, chosen by MAIL_TRANSPORT: LogMailer
+// (development and tests) or SesMailer (Amazon SES, under the AWS BAA).
 //
 // Emails must not contain PHI beyond the recipient's own address: no rider
 // names, addresses, trip details or medical information.

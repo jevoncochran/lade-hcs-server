@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { CustomerAuthModule } from '../customer-auth/customer-auth.module.js';
 import { MileageModule } from '../mileage/mileage.module.js';
+import { NotificationsModule } from '../notifications/notifications.module.js';
 import { PaymentsModule } from '../payments/payments.module.js';
 import { PricingModule } from '../pricing/pricing.module.js';
 import { QuotesModule } from '../quotes/quotes.module.js';
@@ -14,6 +15,7 @@ import { BookingsService } from './bookings.service.js';
     PricingModule,
     QuotesModule,
     PaymentsModule,
+    NotificationsModule,
   ],
   controllers: [BookingsController],
   providers: [BookingsService],

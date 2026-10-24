@@ -1,3 +1,4 @@
+import { lateCancelFee } from '../bookings/booking-status.js';
 import {
   BookingStatus,
   PaymentStatus,
@@ -39,18 +40,14 @@ const FINAL: BookingStatus[] = [
   BookingStatus.CANCELLED,
 ];
 
-// Cancelling a confirmed ride inside the window before pickup costs the
-// late-cancellation fee. Unconfirmed requests can always be cancelled free:
-// Lade hadn't committed to them yet.
-export const lateCancelFee = (input: ActionInput): number | null => {
-  if (input.status !== BookingStatus.CONFIRMED) return null;
-  const windowStart =
-    input.outboundPickupAt.getTime() -
-    input.lateCancelWindowMinutes * MINUTE_MS;
-  return input.now.getTime() >= windowStart
-    ? input.rule.lateCancelFeeCents
-    : null;
-};
+export const lateCancelFeeFor = (input: ActionInput) =>
+  lateCancelFee({
+    status: input.status,
+    outboundPickupAt: input.outboundPickupAt,
+    lateCancelFeeCents: input.rule.lateCancelFeeCents,
+    windowMinutes: input.lateCancelWindowMinutes,
+    now: input.now,
+  });
 
 export const noShowAvailableAt = (input: ActionInput) =>
   new Date(
@@ -67,7 +64,7 @@ export const staffActions = (input: ActionInput): StaffActions => {
       allowed:
         input.status === BookingStatus.REQUESTED ||
         input.status === BookingStatus.CONFIRMED,
-      feeCents: lateCancelFee(input),
+      feeCents: lateCancelFeeFor(input),
     },
     noShow: {
       allowed: confirmed && input.now >= noShowAt,

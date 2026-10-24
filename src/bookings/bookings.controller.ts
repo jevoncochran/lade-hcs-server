@@ -19,6 +19,7 @@ import { CustomerAuthGuard } from '../customer-auth/customer-auth.guard.js';
 import type { SessionCustomer } from '../customer-auth/customer-session.service.js';
 import { AddressNotFoundFilter } from '../mileage/address-not-found.filter.js';
 import { BookingsService } from './bookings.service.js';
+import { CancelRideDto } from './dto/cancel-ride.dto.js';
 import { CreateBookingDto } from './dto/create-booking.dto.js';
 
 // A customer's own bookings. Staff endpoints live separately (admin).
@@ -60,5 +61,17 @@ export class BookingsController {
     @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
   ) {
     return this.bookings.get(customer, id);
+  }
+
+  // The customer cancelling their own ride (fee rules in the service).
+  @Post(':id/cancel')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @CurrentCustomer() customer: SessionCustomer,
+    @Param('id', new ParseUUIDPipe({ version: '4' })) id: string,
+    @Body() dto: CancelRideDto,
+    @ReqMeta() meta: RequestMeta,
+  ) {
+    return this.bookings.cancel(customer, id, dto, meta);
   }
 }

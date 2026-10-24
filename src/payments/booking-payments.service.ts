@@ -9,7 +9,11 @@ import {
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PaymentGateway } from './payment-gateway.js';
 
-export type PaymentActor = { actorType: ActorType; staffUserId?: string };
+export type PaymentActor = {
+  actorType: ActorType;
+  staffUserId?: string;
+  customerId?: string;
+};
 
 // Payments that can (still) be charged. CHARGE_PENDING: an earlier attempt
 // got no answer; retrying it reuses the same idempotency key.

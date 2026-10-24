@@ -108,6 +108,37 @@ describe('validateEnv', () => {
     expect(() => validateEnv({ ...required, NODE_ENV: 'test' })).not.toThrow();
   });
 
+  describe('email', () => {
+    it('sends with SES from the default address', () => {
+      expect(validateEnv({ ...required, MAIL_TRANSPORT: 'ses' })).toMatchObject(
+        {
+          MAIL_TRANSPORT: 'ses',
+          MAIL_FROM: 'Lade Health Care Services <no-reply@ladehcs.com>',
+        },
+      );
+    });
+
+    it('treats an empty reply-to as not set, but checks a real one', () => {
+      expect(
+        validateEnv({ ...required, MAIL_REPLY_TO: '' }).MAIL_REPLY_TO,
+      ).toBe(undefined);
+      expect(() =>
+        validateEnv({ ...required, MAIL_REPLY_TO: 'not an email' }),
+      ).toThrow(/MAIL_REPLY_TO/);
+    });
+
+    it('needs both SES keys or neither, without echoing the secret', () => {
+      const run = () =>
+        validateEnv({
+          ...required,
+          MAIL_TRANSPORT: 'ses',
+          SES_SECRET_ACCESS_KEY: 'super-secret-value',
+        });
+      expect(run).toThrow(/set both or neither/);
+      expect(run).not.toThrow(/super-secret-value/);
+    });
+  });
+
   describe('AWS Location', () => {
     it('requires an API key when mileage uses AWS', () => {
       expect(() =>

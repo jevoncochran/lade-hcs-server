@@ -1,8 +1,13 @@
 import type {
   Booking,
+  BookingCharge,
   BookingStatus,
   CareLevel,
+  ChargeType,
   LegDirection,
+  LegStatus,
+  Payment,
+  PaymentStatus,
   TripKind,
   TripLeg,
   TripType,
@@ -96,5 +101,58 @@ export const toBookingView = (
       distanceIsEstimate: snapshot.distanceIsEstimate ?? false,
     },
     createdAt: booking.createdAt.toISOString(),
+  };
+};
+
+// A customer's own ride on "My rides": the booking plus how it went, what
+// it cost in the end, and whether they can still cancel it themselves.
+export type CustomerRideView = Omit<BookingView, 'legs'> & {
+  legs: (BookingView['legs'][number] & { status: LegStatus })[];
+  cancelledAt: string | null;
+  // Final charges, once the ride happened (or a fee applied). Staff notes
+  // (e.g. why a fee was waived) are left out.
+  charges: {
+    type: ChargeType;
+    leg: LegDirection | null;
+    quantity: number | null;
+    amountCents: number;
+  }[];
+  chargesTotalCents: number;
+  paymentStatus: PaymentStatus | null;
+  // feeCents: the late-cancellation fee if they cancel now, else null.
+  cancel: { allowed: boolean; feeCents: number | null };
+};
+
+export type CustomerRideRecord = Booking & {
+  legs: TripLeg[];
+  payments: Payment[]; // newest first
+  charges: (BookingCharge & { leg: { direction: LegDirection } | null })[];
+};
+
+export const toCustomerRideView = (
+  booking: CustomerRideRecord,
+  cancel: CustomerRideView['cancel'],
+): CustomerRideView => {
+  const base = toBookingView(booking);
+  const legs = sortLegs(booking.legs); // same order as base.legs
+  return {
+    ...base,
+    legs: base.legs.map((leg, index) => ({
+      ...leg,
+      status: legs[index].status,
+    })),
+    cancelledAt: booking.cancelledAt?.toISOString() ?? null,
+    charges: booking.charges.map((charge) => ({
+      type: charge.type,
+      leg: charge.leg?.direction ?? null,
+      quantity: charge.quantity === null ? null : Number(charge.quantity),
+      amountCents: charge.amountCents,
+    })),
+    chargesTotalCents: booking.charges.reduce(
+      (sum, charge) => sum + charge.amountCents,
+      0,
+    ),
+    paymentStatus: booking.payments[0]?.status ?? null,
+    cancel,
   };
 };
