@@ -4,6 +4,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
 import { AddressesModule } from './addresses/addresses.module.js';
 import { AuditModule } from './audit/audit.module.js';
+import { ContactModule } from './contact/contact.module.js';
 import { BookingsModule } from './bookings/bookings.module.js';
 import { OriginGuard } from './common/guards/origin.guard.js';
 import { rateLimitOptions } from './config/rate-limit.config.js';
@@ -46,6 +47,7 @@ import { StaffMembersModule } from './staff-members/staff-members.module.js';
     BookingsModule,
     StripeWebhookModule,
     AddressesModule,
+    ContactModule,
   ],
   providers: [
     // Order matters: rate limit first, then the CSRF origin check.

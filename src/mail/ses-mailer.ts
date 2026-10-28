@@ -21,7 +21,10 @@ export class SesMailer extends Mailer {
         new SendEmailCommand({
           FromEmailAddress: this.from,
           Destination: { ToAddresses: [message.to] },
-          ReplyToAddresses: this.replyTo ? [this.replyTo] : undefined,
+          ReplyToAddresses:
+            (message.replyTo ?? this.replyTo)
+              ? [message.replyTo ?? this.replyTo!]
+              : undefined,
           Content: {
             Simple: {
               Subject: { Data: message.subject, Charset: 'UTF-8' },

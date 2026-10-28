@@ -33,6 +33,19 @@ describe('SesMailer', () => {
     });
   });
 
+  it("uses a message's own reply-to over the default", async () => {
+    const sent: SendEmailCommand[] = [];
+    const mailer = new SesMailer(
+      {
+        send: async (command: SendEmailCommand) => void sent.push(command),
+      } as never,
+      'Lade <no-reply@ladehcs.com>',
+      'info@example.com',
+    );
+    await mailer.send({ ...message, replyTo: 'visitor@example.com' });
+    expect(sent[0].input.ReplyToAddresses).toEqual(['visitor@example.com']);
+  });
+
   it('passes failures on without logging the recipient', async () => {
     const mailer = new SesMailer(
       {

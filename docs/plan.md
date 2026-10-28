@@ -163,6 +163,8 @@ Booking emails (`src/notifications/booking-notifications.service.ts`, texts in `
 - Card saved (once, website or webhook): customer "request received"; every active staff member "New ride request LD-…" with a link to the booking.
 - Staff confirm / cancel / no-show / complete: customer email; fees say whether the card was charged. Completed + charged → receipt. A declined charge → "we couldn't charge your card" with a link to /contact. Retry that succeeds → receipt.
 
+Contact form: the website posts to `POST /contact` (public, strict per-IP rate limit, Origin check, honeypot); the API emails it to `CONTACT_INBOX` (default info@ladehcs.com, a Google Workspace mailbox under its BAA) through SES with the visitor as reply-to. Nothing stored or logged.
+
 Before launch: SES production access (out of the sandbox), a real reply-to inbox (ladehcs.com has no MX records), SES bounce/complaint handling (configuration set + notifications).
 
 ## Schema

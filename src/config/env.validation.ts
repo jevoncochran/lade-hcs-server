@@ -77,6 +77,11 @@ export class Env {
   @IsEmail()
   MAIL_REPLY_TO?: string;
 
+  // Lade's inbox for contact form messages (a Google Workspace mailbox,
+  // covered by its BAA: messages may contain health details).
+  @IsEmail()
+  CONTACT_INBOX = 'info@ladehcs.com';
+
   // Access key of an IAM user allowed only ses:SendEmail. Leave both empty
   // when the server runs on AWS with a role that may send.
   @IsOptional()
