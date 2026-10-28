@@ -37,7 +37,12 @@ export class StaffSessionService {
     return token;
   }
 
-  async findStaff(token: string): Promise<SessionStaff | null> {
+  // touch: false for automatic background checks, which mustn't count as
+  // activity (see BackgroundCheck).
+  async findStaff(
+    token: string,
+    { touch = true }: { touch?: boolean } = {},
+  ): Promise<SessionStaff | null> {
     const session = await this.prisma.staffSession.findUnique({
       where: { tokenHash: hashToken(token) },
       include: {
@@ -60,7 +65,10 @@ export class StaffSessionService {
       return null;
     }
 
-    if (Date.now() - session.lastSeenAt.getTime() > SESSION_TOUCH_INTERVAL_MS) {
+    if (
+      touch &&
+      Date.now() - session.lastSeenAt.getTime() > SESSION_TOUCH_INTERVAL_MS
+    ) {
       await this.prisma.staffSession.update({
         where: { id: session.id },
         data: { lastSeenAt: new Date() },

@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   HttpCode,
   HttpStatus,
   Param,
@@ -10,6 +11,7 @@ import {
   UseFilters,
   UseGuards,
 } from '@nestjs/common';
+import { BackgroundCheck } from '../common/decorators/background-check.decorator.js';
 import {
   ReqMeta,
   type RequestMeta,
@@ -53,6 +55,14 @@ export class BookingsController {
   @Get()
   list(@CurrentCustomer() customer: SessionCustomer) {
     return this.bookings.list(customer);
+  }
+
+  // Open pages ask this every few seconds and reload when it changes.
+  @Get('changes')
+  @BackgroundCheck()
+  @Header('Cache-Control', 'no-store')
+  changes(@CurrentCustomer() customer: SessionCustomer) {
+    return this.bookings.version(customer);
   }
 
   @Get(':id')

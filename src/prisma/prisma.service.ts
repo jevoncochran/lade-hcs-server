@@ -10,7 +10,15 @@ export const createPrismaClient = (
   blindIndex: BlindIndex,
 ) =>
   new PrismaClient({
-    adapter: new PrismaPg({ connectionString: databaseUrl }),
+    adapter: new PrismaPg({
+      connectionString: databaseUrl,
+      // The Postgres adapter sends and reads times without a time zone, so
+      // the database session must be UTC. Otherwise a server whose default
+      // zone isn't UTC (a local Postgres.app, for example) stores every time
+      // shifted by its offset: invisible inside the app, but wrong for the
+      // database's own clock, SQL tools and anything comparing them.
+      options: '-c TimeZone=UTC',
+    }),
   }).$extends(encryptionExtension(cipher, blindIndex));
 
 export type ExtendedPrismaClient = ReturnType<typeof createPrismaClient>;

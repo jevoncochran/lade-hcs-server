@@ -96,9 +96,12 @@ export class StaffInviteService {
     return { link: this.inviteLink(token), expiresAt };
   }
 
-  private inviteLink(token: string) {
+  // `reset=1` only changes the setup page's wording ("Reset your sign-in");
+  // the token alone decides what the link can do.
+  private inviteLink(token: string, kind: 'invite' | 'reset' = 'invite') {
     const siteUrl = this.config.get('SITE_URL', { infer: true });
-    return `${siteUrl}/admin/accept-invite?token=${encodeURIComponent(token)}`;
+    const link = `${siteUrl}/admin/accept-invite?token=${encodeURIComponent(token)}`;
+    return kind === 'reset' ? `${link}&reset=1` : link;
   }
 
   // An admin resetting someone's sign-in. Only the newest reset link for an
@@ -142,7 +145,11 @@ export class StaffInviteService {
       );
     });
 
-    return { link: this.inviteLink(token), expiresAt, email: staff.email };
+    return {
+      link: this.inviteLink(token, 'reset'),
+      expiresAt,
+      email: staff.email,
+    };
   }
 
   // Step 1: a fresh MFA secret every time, in case a QR code was lost.
@@ -198,13 +205,16 @@ export class StaffInviteService {
   // Step 3: returns a session token; the new staff member is signed in.
   async completeAcceptance(
     token: string,
-    name: string,
+    name: string | undefined,
     password: string,
     meta: RequestMeta,
   ) {
     const invite = await this.findUsableInvite(token);
     if (!invite.mfaSecret || !invite.mfaVerifiedAt) {
       throw new BadRequestException('Confirm the code from your phone first.');
+    }
+    if (!invite.resetForId && !name) {
+      throw new BadRequestException('Enter your name.');
     }
 
     const passwordHash = await hashPassword(password);
@@ -227,7 +237,7 @@ export class StaffInviteService {
           const reset = await tx.staffUser.updateMany({
             where: { id: invite.resetForId, isActive: true },
             data: {
-              name,
+              ...(name ? { name } : {}), // a reset keeps the name otherwise
               passwordHash,
               mfaSecret: invite.mfaSecret,
               mfaLastTimeStep: invite.mfaLastTimeStep,
@@ -260,7 +270,7 @@ export class StaffInviteService {
         const staff = await tx.staffUser.create({
           data: {
             email: invite.email,
-            name,
+            name: name!, // checked above: required for a new account
             role: invite.role,
             passwordHash,
             mfaSecret: invite.mfaSecret,

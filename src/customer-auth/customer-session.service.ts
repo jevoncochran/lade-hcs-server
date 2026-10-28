@@ -39,7 +39,12 @@ export class CustomerSessionService {
     return token;
   }
 
-  async findCustomer(token: string): Promise<SessionCustomer | null> {
+  // touch: false for automatic background checks, which mustn't count as
+  // activity (see BackgroundCheck).
+  async findCustomer(
+    token: string,
+    { touch = true }: { touch?: boolean } = {},
+  ): Promise<SessionCustomer | null> {
     const session = await this.prisma.customerSession.findUnique({
       where: { tokenHash: hashToken(token) },
       include: {
@@ -64,7 +69,10 @@ export class CustomerSessionService {
       return null;
     }
 
-    if (Date.now() - session.lastSeenAt.getTime() > SESSION_TOUCH_INTERVAL_MS) {
+    if (
+      touch &&
+      Date.now() - session.lastSeenAt.getTime() > SESSION_TOUCH_INTERVAL_MS
+    ) {
       await this.prisma.customerSession.update({
         where: { id: session.id },
         data: { lastSeenAt: new Date() },

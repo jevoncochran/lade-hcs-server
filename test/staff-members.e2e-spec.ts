@@ -314,6 +314,55 @@ describe('Staff management (e2e)', () => {
       ).toMatchObject({ name: 'Renamed Person', pendingReset: false });
     });
 
+    it("doesn't ask for the name again", async () => {
+      const person = await member();
+      const { body } = await admin
+        .post(`/staff/members/${person.id}/reset-sign-in`)
+        .expect(200);
+      // The page words itself as a reset ("Reset your sign-in").
+      expect(body.link).toMatch(/&reset=1$/);
+      const token = tokenOf(body.link);
+      const client = browser(app);
+      const start = await client
+        .post('/staff/invites/accept/start', { token })
+        .expect(200);
+      await client
+        .post('/staff/invites/accept/verify-code', {
+          token,
+          mfaCode: await codeFor(start.body.secret),
+        })
+        .expect(200);
+      // Phone, then password: no name.
+      await client
+        .post('/staff/invites/accept/complete', { token, password: PASSWORD })
+        .expect(204);
+
+      expect(
+        (await list()).members.find((m: { id: string }) => m.id === person.id),
+      ).toMatchObject({ name: 'New Person' });
+    });
+
+    it('still needs a name for a new account', async () => {
+      const { body } = await admin
+        .post('/staff/invites', { email: uniqueEmail('noname'), role: 'ADMIN' })
+        .expect(201);
+      const token = tokenOf(body.link);
+      const client = browser(app);
+      const start = await client
+        .post('/staff/invites/accept/start', { token })
+        .expect(200);
+      await client
+        .post('/staff/invites/accept/verify-code', {
+          token,
+          mfaCode: await codeFor(start.body.secret),
+        })
+        .expect(200);
+      const refused = await client
+        .post('/staff/invites/accept/complete', { token, password: PASSWORD })
+        .expect(400);
+      expect(refused.body.message).toBe('Enter your name.');
+    });
+
     it('also unlocks a locked account', async () => {
       const person = await member();
       await prisma.staffUser.update({

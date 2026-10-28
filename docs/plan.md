@@ -51,7 +51,7 @@ Public online bookings use the partner rates for now (`PriceChannel.PUBLIC`).
 | Bariatric wheelchair | $125 | $250 | $4.00 | $125 | $62.50 |
 | Stretcher* | $175 | $350 | $5.00 | $175 | $87.50 |
 
-\*Stretcher rate and all no-show / late-cancel fees are **proposed** — pending Lade sign-off. The current rate card says stretcher is "not offered"; Lade is keeping the service and the rate card needs updating.
+\*Stretcher rate and all no-show / late-cancel fees are **tentatively approved** (Jevon, 2026-10-28) for testing and launch prep — **owner approval still needed** (owner session). The current rate card says stretcher is "not offered"; Lade is keeping the service and the rate card needs updating.
 
 Rules:
 
@@ -134,7 +134,9 @@ Customers must create an account to book (decided 2026-10-09). Guest booking may
 - Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections. Initial admins: Jevon and the two owners.
 - Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/verify-code`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
 - Staff management (admins only, `AdminGuard` after `StaffAuthGuard`; website `/admin/staff`): `GET /staff/members` (members + pending invite/reset links), `POST /staff/invites` `{ email, role }` (emails the link and returns it), `POST /staff/invites/:id/revoke`, `POST /staff/members/:id/role` `{ role }`, `/deactivate` (ends their sessions and pending reset), `/reactivate`, `/reset-sign-in`. An admin can't act on their own account; there's always one active admin (role/activation changes are serializable transactions, so two admins demoting each other at once can't both succeed). All audited.
-- Sign-in reset (forgotten password, lost phone, locked out): a `StaffInvite` with `resetForId`. The same setup page (phone → name → password) replaces that account's password and authenticator, clears any lockout and ends all its sessions. Until it's used, the old sign-in still works. Only the newest reset link works.
+- Live updates: open booking pages (staff list and booking, customer My rides and ride) ask `GET /staff/bookings/changes` or `GET /bookings/changes` every 10 s while visible and reload when the short version string changes (`src/bookings/bookings-version.ts`: counts and last-change times only, no PHI, not audited). These are `@BackgroundCheck()` endpoints: they don't count as session activity, so the 15-minute staff logoff still applies. WebSockets were considered and left for later (an open socket keeps Cloud Run billing ~$25–60/month; the pages wouldn't need rewriting to switch).
+- Database sessions are forced to UTC (`PrismaService`): the Postgres adapter sends and reads times without a zone, so a non-UTC server default (a local Postgres.app was America/Bogota) stored every time shifted. Cloud SQL defaults to UTC anyway.
+- Sign-in reset (forgotten password, lost phone, locked out): a `StaffInvite` with `resetForId`. The setup page, in two steps (phone → password; the name is kept) replaces that account's password and authenticator, clears any lockout and ends all its sessions. Until it's used, the old sign-in still works. Only the newest reset link works.
 - Viewing bookings (dispatchers and admins): `GET /staff/bookings` lists by outbound pickup time (`sort=pickup`, default) or `sort=newest`, filtered by `status` (default: all but `PENDING_PAYMENT`), pickup days `from`/`to` (YYYY-MM-DD in `BUSINESS_TIMEZONE`, inclusive; with no dates and no search, today onward), exact `reference` or exact `riderLastName` (blind index), paged (`page`, `pageSize` ≤ 100). Rows are summaries; `GET /staff/bookings/:id` adds requester, payment, leg progress and status history. Both are `no-store` and every view is audited (`staff.bookings_listed` with the booking ids, `staff.booking_viewed`), without PHI.
 - Actions (`POST /staff/bookings/:id/…`, each returns the updated booking with `actions`: what's allowed right now, from `staff-bookings/booking-actions.ts`):
   - `confirm`: REQUESTED → CONFIRMED.
@@ -181,21 +183,27 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 **Lade:**
 
 - ~~Accept the AWS BAA~~ — done 2026-10-20. The account (created with Google sign-up) needed the paid plan **and** "Activate advanced features" before Artifact worked. Keep the downloaded BAA PDF in Lade's records.
-- **Launch blocker:** accept the **Google Workspace BAA**. Lade's email (info@ladehcs.com) runs on Google Workspace, and it's the reply-to address of every email the site sends, so customer replies (which can include rider or medical details) land there. Free, paid Workspace plans only: admin.google.com → Account → Account settings → Legal and compliance → accept the HIPAA Business Associate Amendment.
+- ~~Accept the Google Cloud BAA~~ — done 2026-10-28 (console.cloud.google.com/iam-admin/privacy → "Google Cloud Platform HIPAA Business Associate Addendum"). Keep the screenshot in Lade's records.
+- ~~SES production access~~ — already granted (confirmed 2026-10-28).
+- ~~Accept the Google Workspace BAA~~ — done 2026-10-28 (admin.google.com → Account settings → Legal and compliance). Keep the screenshot in Lade's records.
+- **Launch blocker (deferred, do with the owner):** activate Stripe live mode — business details, owner identity, payout bank account, statement descriptor (e.g. `LADE HEALTH CARE`), support phone/email; then live keys (`pk_live_…` for the website, `sk_live_…` straight into Secret Manager, never pasted anywhere). Production config refuses test keys, so either do this before the deploy or deploy as a clearly labeled test site first.
 - **Launch blocker:** add two DNS records at Network Solutions (where ladehcs.com's DNS is), so Lade's emails don't go to spam. As of 2026-10-23 the domain has neither:
   - SPF, a TXT record on `ladehcs.com`: `v=spf1 include:_spf.google.com include:amazonses.com ~all` (Google Workspace and Amazon SES may send as ladehcs.com). Only one SPF record per domain: merge with any existing one.
   - DMARC, a TXT record on `_dmarc.ladehcs.com`: `v=DMARC1; p=none; rua=mailto:info@ladehcs.com` (monitor-only, reports to info@; tighten later).
   - Check afterwards: `dig +short TXT ladehcs.com` and `dig +short TXT _dmarc.ladehcs.com`.
 
-- Sign off on the stretcher rate and no-show / late-cancel fees; update the rate card (add stretcher and no-show / late-cancel fees).
+- **Owner session:** approve the stretcher rate and no-show / late-cancel fees (tentatively approved 2026-10-28; the Terms show them with a "pending approval" marker); update the rate card (add stretcher and no-show / late-cancel fees).
 - Terms of service + privacy notice covering wait time, no-show and late-cancel rules (checkout consent depends on it).
 - Records retention period (HIPAA documentation is 6 years; check Florida requirements).
-- Whether to collect Medicaid / insurance IDs.
-- BAA between Lade and Jevon. Lade should own the Google Cloud, AWS and Stripe accounts.
+- **Owner session:** how Lade takes **Medicaid and private insurance** today (broker such as a Medicaid transportation broker, or billing insurers directly), and how payment is secured for those riders. The website says Lade accepts Medicaid, insurance, cash and cards, with online booking card-only and Medicaid/insurance trips booked by phone. Decides whether to collect Medicaid / insurance IDs later.
+- **Owner session (nice to have):** the logo as a transparent PNG or SVG. The current file has a solid background, which shows as a white box on the dark footer (`src/components/Logo.tsx` in the website).
+- If Lade bills Medicaid or insurance, it is almost certainly a **HIPAA covered entity**: the attorney should confirm, and Lade likely needs a formal **Notice of Privacy Practices** in addition to the website Privacy Notice.
+- **Deferred (after the website and deploy):** BAA between Lade and Jevon (developer with system access). Option: Claude drafts it from the HHS sample provisions; Lade's attorney reviews; both sign (owner session). Lade should own the Google Cloud, AWS and Stripe accounts.
 
 **Website (`lade-healthcare-services`):**
 
-- Replace placeholders in `src/lib/site.ts` with real details from the rate card (5100 N Nebraska Ave, Tampa, FL 33603; (708) 735-5701; info@ladehcs.com).
+- **Confirm with the owner:** the site now uses the rate card's phone **(708) 735-5701** and address **5100 N Nebraska Ave, Tampa, FL 33603** (`src/lib/site.ts`, also shown in the Terms and Privacy contact sections). Still a placeholder: the service area.
+- Terms of Service (`/terms`) and Privacy Notice (`/privacy`) are DRAFTS (yellow banner). Before launch: Lade fills in the legal entity name, approves the fee table and retention period, an attorney reviews the marked sections (liability, venue, whether a HIPAA Notice of Privacy Practices is needed); then remove `draft` and bump `TERMS_VERSION` on the API.
 - Add Bariatric wheelchair as a care level.
 - `/book-a-ride` page (phase 2) and `/admin` section (phase 3).
 

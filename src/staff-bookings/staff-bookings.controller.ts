@@ -11,6 +11,7 @@ import {
   Query,
   UseGuards,
 } from '@nestjs/common';
+import { BackgroundCheck } from '../common/decorators/background-check.decorator.js';
 import {
   ReqMeta,
   type RequestMeta,
@@ -44,6 +45,15 @@ export class StaffBookingsController {
     @ReqMeta() meta: RequestMeta,
   ) {
     return this.bookings.list(staff, query, meta);
+  }
+
+  // Open pages ask this every few seconds and reload when it changes. Not
+  // activity, and not audited: it reveals no patient information.
+  @Get('changes')
+  @BackgroundCheck()
+  @Header('Cache-Control', 'no-store')
+  changes() {
+    return this.bookings.version();
   }
 
   @Get(':id')

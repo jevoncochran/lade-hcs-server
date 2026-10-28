@@ -40,6 +40,7 @@ import {
 } from '../quotes/quotes.service.js';
 import { newBookingReference } from './booking-reference.js';
 import { cancelBooking, lateCancelFee } from './booking-status.js';
+import { bookingsVersion } from './bookings-version.js';
 import {
   sortLegs,
   toBookingView,
@@ -289,6 +290,15 @@ export class BookingsService {
         meta,
       ),
     );
+  }
+
+  // For pages that update themselves: changes whenever one of this
+  // customer's bookings does.
+  version(customer: SessionCustomer) {
+    return bookingsVersion(this.prisma, {
+      customerId: customer.id,
+      deletedAt: null,
+    });
   }
 
   async list(customer: SessionCustomer) {

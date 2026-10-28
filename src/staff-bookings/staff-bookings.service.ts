@@ -13,6 +13,7 @@ import {
 } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import type { SessionStaff } from '../staff-auth/staff-session.service.js';
+import { bookingsVersion } from '../bookings/bookings-version.js';
 import { staffActions } from './booking-actions.js';
 import type { ListStaffBookingsDto } from './dto/list-staff-bookings.dto.js';
 import {
@@ -112,6 +113,11 @@ export class StaffBookingsService {
       page: query.page,
       pageSize: query.pageSize,
     };
+  }
+
+  // For pages that update themselves: changes whenever any booking does.
+  version() {
+    return bookingsVersion(this.prisma, { deletedAt: null });
   }
 
   // One booking for staff, with the actions allowed right now. No audit
