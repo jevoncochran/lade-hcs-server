@@ -48,3 +48,35 @@ export const passwordChanged = (to: string): MailMessage => ({
     `If you didn't do this, contact Lade Health Care Services right away.` +
     signature,
 });
+
+// Staff emails: the person's own account only, never patient information.
+
+export const staffInvite = (
+  to: string,
+  roleName: string,
+  link: string,
+  expires: string,
+): MailMessage => ({
+  to,
+  subject: 'Set up your Lade staff account',
+  text:
+    `You've been invited to join Lade Health Care Services as ${roleName}. ` +
+    `Set up your account here (you'll need your phone to scan a code):\n\n${link}\n\n` +
+    `This link works once and expires ${expires}. If you weren't expecting it, you can ignore this email.` +
+    signature,
+});
+
+export const staffSignInReset = (
+  to: string,
+  link: string,
+  expires: string,
+): MailMessage => ({
+  to,
+  subject: 'Reset your Lade staff sign-in',
+  text:
+    `An administrator reset your sign-in. Choose a new password and connect ` +
+    `your phone again here:\n\n${link}\n\n` +
+    `This link works once and expires ${expires}. Until you finish, your old ` +
+    `password and codes still work. If you didn't ask for this, tell an administrator.` +
+    signature,
+});

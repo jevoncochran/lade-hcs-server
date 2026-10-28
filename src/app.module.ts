@@ -17,6 +17,7 @@ import { QuotesModule } from './quotes/quotes.module.js';
 import { StripeWebhookModule } from './payments/stripe-webhook.module.js';
 import { StaffAuthModule } from './staff-auth/staff-auth.module.js';
 import { StaffBookingsModule } from './staff-bookings/staff-bookings.module.js';
+import { StaffMembersModule } from './staff-members/staff-members.module.js';
 
 @Module({
   imports: [
@@ -40,6 +41,7 @@ import { StaffBookingsModule } from './staff-bookings/staff-bookings.module.js';
     CustomerAuthModule,
     StaffAuthModule,
     StaffBookingsModule,
+    StaffMembersModule,
     QuotesModule,
     BookingsModule,
     StripeWebhookModule,

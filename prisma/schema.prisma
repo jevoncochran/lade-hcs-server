@@ -377,7 +377,8 @@ model StaffUser {
   bookingEvents  BookingEvent[]
   bookingCharges BookingCharge[]
   auditLogs      AuditLog[]
-  sentInvites    StaffInvite[]
+  sentInvites    StaffInvite[]   @relation("InvitedBy")
+  signInResets   StaffInvite[]   @relation("SignInReset")
 
   createdAt DateTime @default(now()) @db.Timestamptz(6)
   updatedAt DateTime @updatedAt @db.Timestamptz(6)
@@ -413,10 +414,16 @@ model StaffInvite {
   mfaVerifiedAt   DateTime?  @db.Timestamptz(6)
   mfaLastTimeStep Int? // the matched code's step, so it can't be reused to sign in
   invitedById     String?    @db.Uuid // null when created by the bootstrap script
-  invitedBy       StaffUser? @relation(fields: [invitedById], references: [id])
+  invitedBy       StaffUser? @relation("InvitedBy", fields: [invitedById], references: [id])
+  // Set for a sign-in reset (forgotten password or lost phone): accepting
+  // gives this existing account a new password and authenticator instead
+  // of creating one.
+  resetForId      String?    @db.Uuid
+  resetFor        StaffUser? @relation("SignInReset", fields: [resetForId], references: [id], onDelete: Restrict)
   createdAt       DateTime   @default(now()) @db.Timestamptz(6)
 
   @@index([email])
+  @@index([resetForId])
 }
 
 // ---------- HIPAA audit trail ----------

@@ -73,8 +73,9 @@ export const RELATIONS: Record<ModelName, Record<string, ModelName>> = {
     bookingCharges: 'BookingCharge',
     auditLogs: 'AuditLog',
     sentInvites: 'StaffInvite',
+    signInResets: 'StaffInvite',
   },
   StaffSession: { staffUser: 'StaffUser' },
-  StaffInvite: { invitedBy: 'StaffUser' },
+  StaffInvite: { invitedBy: 'StaffUser', resetFor: 'StaffUser' },
   AuditLog: { staffUser: 'StaffUser', customer: 'Customer' },
 };

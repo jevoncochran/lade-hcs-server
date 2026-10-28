@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { AuditService } from '../audit/audit.service.js';
@@ -27,6 +28,10 @@ const INVALID_INVITE = 'This invite link is invalid or has expired.';
 //      about 30 seconds) and records that the phone is set up
 //   3. `completeAcceptance` sets name + password and creates the account,
 //      once the phone is verified
+//
+// A sign-in reset (forgotten password, lost phone) is an invite tied to an
+// existing account (`resetForId`): the same three steps replace that
+// account's password and authenticator and sign it out everywhere.
 @Injectable()
 export class StaffInviteService {
   constructor(
@@ -88,11 +93,56 @@ export class StaffInviteService {
       );
     });
 
+    return { link: this.inviteLink(token), expiresAt };
+  }
+
+  private inviteLink(token: string) {
     const siteUrl = this.config.get('SITE_URL', { infer: true });
-    return {
-      link: `${siteUrl}/admin/accept-invite?token=${encodeURIComponent(token)}`,
-      expiresAt,
-    };
+    return `${siteUrl}/admin/accept-invite?token=${encodeURIComponent(token)}`;
+  }
+
+  // An admin resetting someone's sign-in. Only the newest reset link for an
+  // account works.
+  async createReset(staffUserId: string, adminId: string, meta?: RequestMeta) {
+    const staff = await this.prisma.staffUser.findUnique({
+      where: { id: staffUserId },
+      select: { id: true, email: true, role: true },
+    });
+    if (!staff) throw new NotFoundException('Staff member not found.');
+
+    const token = newToken();
+    const expiresAt = new Date(Date.now() + INVITE_TTL_MS);
+    await this.prisma.$transaction(async (tx) => {
+      await tx.staffInvite.updateMany({
+        where: { resetForId: staff.id, acceptedAt: null, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      const reset = await tx.staffInvite.create({
+        data: {
+          email: staff.email,
+          role: staff.role,
+          tokenHash: hashToken(token),
+          expiresAt,
+          invitedById: adminId,
+          resetForId: staff.id,
+        },
+        select: { id: true },
+      });
+      await this.audit.record(
+        {
+          actorType: ActorType.STAFF,
+          staffUserId: adminId,
+          action: 'staff.sign_in_reset_created',
+          entityType: 'StaffUser',
+          entityId: staff.id,
+          metadata: { resetId: reset.id },
+          meta,
+        },
+        tx,
+      );
+    });
+
+    return { link: this.inviteLink(token), expiresAt, email: staff.email };
   }
 
   // Step 1: a fresh MFA secret every time, in case a QR code was lost.
@@ -106,7 +156,17 @@ export class StaffInviteService {
       data: { mfaSecret: secret, mfaVerifiedAt: null, mfaLastTimeStep: null },
     });
 
+    // A reset keeps the account's name (it can still be changed).
+    const existing = invite.resetForId
+      ? await this.prisma.staffUser.findUnique({
+          where: { id: invite.resetForId },
+          select: { name: true },
+        })
+      : null;
+
     return {
+      kind: invite.resetForId ? ('reset' as const) : ('invite' as const),
+      name: existing?.name ?? null,
       email: invite.email,
       role: invite.role,
       ...(await totpEnrollment(secret, invite.email)),
@@ -161,6 +221,42 @@ export class StaffInviteService {
         });
         if (claimed.count !== 1) throw new BadRequestException(INVALID_INVITE);
 
+        if (invite.resetForId) {
+          // Reset: new password and authenticator, any lockout cleared, and
+          // every existing session (e.g. on a lost phone) ended.
+          const reset = await tx.staffUser.updateMany({
+            where: { id: invite.resetForId, isActive: true },
+            data: {
+              name,
+              passwordHash,
+              mfaSecret: invite.mfaSecret,
+              mfaLastTimeStep: invite.mfaLastTimeStep,
+              failedLoginCount: 0,
+              lockedUntil: null,
+              lastLoginAt: new Date(), // finishing signs them in
+            },
+          });
+          if (reset.count !== 1) throw new BadRequestException(INVALID_INVITE);
+          await tx.staffSession.updateMany({
+            where: { staffUserId: invite.resetForId, revokedAt: null },
+            data: { revokedAt: new Date() },
+          });
+          await this.audit.record(
+            {
+              actorType: ActorType.STAFF,
+              staffUserId: invite.resetForId,
+              action: 'staff.sign_in_reset_completed',
+              entityType: 'StaffUser',
+              entityId: invite.resetForId,
+              meta,
+            },
+            tx,
+          );
+          return {
+            token: await this.sessions.create(invite.resetForId, tx),
+          };
+        }
+
         const staff = await tx.staffUser.create({
           data: {
             email: invite.email,
@@ -169,6 +265,7 @@ export class StaffInviteService {
             passwordHash,
             mfaSecret: invite.mfaSecret,
             mfaLastTimeStep: invite.mfaLastTimeStep,
+            lastLoginAt: new Date(), // finishing signs them in
           },
           select: { id: true },
         });
