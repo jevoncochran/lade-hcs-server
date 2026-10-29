@@ -5,7 +5,8 @@
 #      starting prices; both safe to re-run). If it fails, nothing is deployed.
 #   3. deploy service `lade-api` with that image
 #
-# Secrets are referenced by name only; their values live in Secret Manager.
+# Secrets are referenced by name only; their values live in Secret Manager,
+# under the same names as the settings (DATABASE_URL, …).
 # Change a setting here (or with a substitution in the trigger), not in the
 # Cloud Run console: each deploy re-applies this file.
 
@@ -47,7 +48,7 @@ steps:
           --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA \
           --service-account=${_RUNTIME_SA}@$PROJECT_ID.iam.gserviceaccount.com \
           --set-cloudsql-instances=$PROJECT_ID:${_REGION}:${_SQL_INSTANCE} \
-          --set-secrets=DATABASE_URL=lade-database-url:latest \
+          --set-secrets=DATABASE_URL=DATABASE_URL:latest \
           --command=npm \
           --args=run,db:release \
           --max-retries=0 \
@@ -69,10 +70,10 @@ steps:
           --allow-unauthenticated \
           --max-instances=1 \
           --set-env-vars=SITE_URL=${_SITE_URL},ALLOW_TEST_PAYMENTS=${_ALLOW_TEST_PAYMENTS},MAIL_TRANSPORT=ses,MAIL_REPLY_TO=info@ladehcs.com,AWS_REGION=us-east-2,MILEAGE_PROVIDER=aws,PAYMENT_PROVIDER=stripe,ENCRYPTION_ACTIVE_KEY_ID=k1 \
-          --set-secrets=DATABASE_URL=lade-database-url:latest,ENCRYPTION_KEYS=lade-encryption-keys:latest,BLIND_INDEX_KEY=lade-blind-index-key:latest,PROXY_SECRET=lade-proxy-secret:latest,STRIPE_SECRET_KEY=lade-stripe-secret-key:latest,STRIPE_PUBLISHABLE_KEY=lade-stripe-publishable-key:latest,SES_ACCESS_KEY_ID=lade-ses-access-key-id:latest,SES_SECRET_ACCESS_KEY=lade-ses-secret-access-key:latest,AWS_LOCATION_API_KEY=lade-aws-location-api-key:latest
+          --set-secrets=DATABASE_URL=DATABASE_URL:latest,ENCRYPTION_KEYS=ENCRYPTION_KEYS:latest,BLIND_INDEX_KEY=BLIND_INDEX_KEY:latest,PROXY_SECRET=PROXY_SECRET:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY:latest,SES_ACCESS_KEY_ID=SES_ACCESS_KEY_ID:latest,SES_SECRET_ACCESS_KEY=SES_SECRET_ACCESS_KEY:latest,AWS_LOCATION_API_KEY=AWS_LOCATION_API_KEY:latest
 
 # At launch (live Stripe keys): add the webhook signing secret to the API's
-# secrets above: STRIPE_WEBHOOK_SECRET=lade-stripe-webhook-secret:latest
+# secrets above: STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA

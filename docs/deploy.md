@@ -9,7 +9,7 @@ covered by the Google Cloud BAA:
 | API | Cloud Run service, deployed from GitHub `lade-hcs-server` (`main`) by `cloudbuild.yaml` | `lade-api` |
 | Database updates | Cloud Run job, run by every API deploy before the new version goes live | `lade-db-migrate` |
 | Database | Cloud SQL for PostgreSQL 16 | instance `lade-db`, database `lade`, user `lade_api` |
-| Secrets | Secret Manager | `lade-…` (below) |
+| Secrets | Secret Manager | named like the settings: `DATABASE_URL`, … (below) |
 
 How the pieces talk:
 
@@ -63,9 +63,7 @@ Console → **IAM & Admin → Service Accounts → Create service account**:
 - **Name:** `lade-api`
 - **Roles:** **Cloud SQL Client**, **Secret Manager Secret Accessor**
 
-The website's Cloud Run service needs **Secret Manager Secret Accessor** too
-(for `lade-proxy-secret`): on the `lade-website` service's **Security** tab,
-note its service account and give it that role in **IAM**.
+(The website gets read access to just one secret, `PROXY_SECRET`, in step 4.)
 
 ## 4. Secrets (once; change them here, never in code)
 
@@ -75,15 +73,21 @@ email or GitHub.
 
 | Secret name | Value |
 |---|---|
-| `lade-database-url` | `postgresql://lade_api:PASSWORD@localhost/lade?host=/cloudsql/PROJECT_ID:us-east1:lade-db` (PASSWORD and PROJECT_ID filled in) |
-| `lade-encryption-keys` | the `ENCRYPTION_KEYS=` value printed by `npm run keys:generate` (see below) |
-| `lade-blind-index-key` | the `BLIND_INDEX_KEY=` value from the same output |
-| `lade-proxy-secret` | a new random value: `openssl rand -base64 48` |
-| `lade-stripe-secret-key` | Stripe secret key (`sk_test_…` while testing) |
-| `lade-stripe-publishable-key` | Stripe publishable key (`pk_test_…` while testing) |
-| `lade-ses-access-key-id` | the SES IAM user's access key ID |
-| `lade-ses-secret-access-key` | the SES IAM user's secret access key |
-| `lade-aws-location-api-key` | the AWS Location API key |
+| `DATABASE_URL` | `postgresql://lade_api:PASSWORD@localhost/lade?host=/cloudsql/PROJECT_ID:us-east1:lade-db` (PASSWORD and PROJECT_ID filled in) |
+| `ENCRYPTION_KEYS` | the `ENCRYPTION_KEYS=` value printed by `npm run keys:generate` (see below) |
+| `BLIND_INDEX_KEY` | the `BLIND_INDEX_KEY=` value from the same output |
+| `PROXY_SECRET` | a new random value: `openssl rand -hex 32` |
+| `STRIPE_SECRET_KEY` | Stripe secret key (`sk_test_…` while testing) |
+| `STRIPE_PUBLISHABLE_KEY` | Stripe publishable key (`pk_test_…` while testing) |
+| `SES_ACCESS_KEY_ID` | the SES IAM user's access key ID |
+| `SES_SECRET_ACCESS_KEY` | the SES IAM user's secret access key |
+| `AWS_LOCATION_API_KEY` | the AWS Location API key |
+
+**Let the website read `PROXY_SECRET` (only that one):** copy the website's
+service account from Cloud Run → `lade-website` → **Security** (usually
+`…-compute@developer.gserviceaccount.com`), then Secret Manager →
+`PROXY_SECRET` → **Permissions → Grant access** → that account, role
+**Secret Manager Secret Accessor**.
 
 **Production encryption keys:** in `lade-hcs-server`, run
 `npm run keys:generate`. It prints brand-new keys (it doesn't change any file).
@@ -126,8 +130,9 @@ Cloud Run → `lade-website` → **Edit & deploy new revision → Variables &
 secrets**:
 
 - Variable `API_URL` = the `lade-api` address (`https://lade-api-….run.app`)
-- **Reference a secret:** `lade-proxy-secret` as environment variable
-  `API_PROXY_SECRET` (version: latest)
+- **Reference a secret:** `PROXY_SECRET` as environment variable
+  `API_PROXY_SECRET` (version: latest). Same value as the API's
+  `PROXY_SECRET`: one secret, read by both.
 - **Deploy**
 
 These stay set across future website deploys.
@@ -151,8 +156,8 @@ Run job against the live database (instructions to follow when we get there).
 1. Point `ladehcs.com` (+ `www`) at `lade-website` (Cloud Run → Manage custom
    domains), add the DNS records at Network Solutions; add SPF and DMARC.
 2. Change the trigger's `_SITE_URL` to `https://ladehcs.com`.
-3. Stripe live keys into `lade-stripe-secret-key` / `-publishable-key`, a
+3. Stripe live keys into `STRIPE_SECRET_KEY` / `-publishable-key`, a
    live webhook to `https://ladehcs.com/api/payments/stripe/webhook`, its
-   signing secret in `lade-stripe-webhook-secret` (and added to
+   signing secret in `STRIPE_WEBHOOK_SECRET` (and added to
    `cloudbuild.yaml`), `_ALLOW_TEST_PAYMENTS` = `false`. Redeploy.
 4. Back up the production encryption keys outside Google (owner).
