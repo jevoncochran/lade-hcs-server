@@ -9,12 +9,12 @@
 
 FROM node:22-alpine AS build
 WORKDIR /app
-# `npm install`, not `npm ci`: a lockfile made on macOS can fail npm ci's
-# strict check on Linux. The schema is copied first: installing runs
+# From the lockfile exactly (.npmrc sets legacy-peer-deps, the way the
+# lockfile was made). The schema is copied first: installing runs
 # `prisma generate` (postinstall), which needs it.
-COPY package.json package-lock.json prisma.config.ts ./
+COPY package.json package-lock.json .npmrc prisma.config.ts ./
 COPY prisma ./prisma
-RUN npm install --no-audit --no-fund
+RUN npm ci --no-audit --no-fund
 COPY . .
 RUN npm run build
 
