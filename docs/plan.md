@@ -209,6 +209,12 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 - Add Bariatric wheelchair as a care level.
 - `/book-a-ride` page (phase 2) and `/admin` section (phase 3).
 
+**After launch: upgrade PostgreSQL 16 → 18** (launched on 16 because local Postgres.app and CI run 16):
+
+1. CI: change the test database image in `.github/workflows/ci.yml` from `postgres:16` to `postgres:18`; push to a branch and check CI passes.
+2. Local: add a PostgreSQL 18 server in Postgres.app, recreate `lade_hcs_dev` / `lade_hcs_test` on it (`npm run db:migrate`, `npm run test:db:prepare`, `npm run db:seed`), run the full test suites.
+3. Production: Cloud SQL → `lade-db` → **Upgrade** to PostgreSQL 18 (in place; a short restart, so do it at a quiet hour). Take an on-demand backup first. Then check `/api/health` and a test booking.
+
 **Jevon (later):**
 
 - Limit the **Google Cloud Build** GitHub app to the two Lade repos (github.com → Settings → Applications → Installed GitHub Apps → Google Cloud Build → Configure → Only select repositories: `lade-healthcare-services`, `lade-hcs-server`). It was installed with access to all of Jevon's repositories.
