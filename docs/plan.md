@@ -218,6 +218,7 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 **Jevon (later):**
 
 - Limit the **Google Cloud Build** GitHub app to the two Lade repos (github.com → Settings → Applications → Installed GitHub Apps → Google Cloud Build → Configure → Only select repositories: `lade-healthcare-services`, `lade-hcs-server`). It was installed with access to all of Jevon's repositories.
+- Give `lade-website` its own minimal service account (it currently runs as the Compute Engine default account, which Cloud Build also uses and which has Cloud Run Admin, Service Account User, etc.). The website only needs Secret Manager Secret Accessor on `PROXY_SECRET`.
 - After getting Google Cloud access: consider setting the project's "Domain restricted sharing" organization policy back to **Inherit parent's policy** (it was overridden to Allow All so a personal Gmail could be added).
 
 **Engineering:**

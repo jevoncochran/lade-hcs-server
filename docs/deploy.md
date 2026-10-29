@@ -60,7 +60,8 @@ Then, on the instance:
 
 Console → **IAM & Admin → Service Accounts → Create service account**:
 
-- **Name:** `lade-api`
+- **Name:** `lade-api` (Google may add a suffix to the ID; Lade's is
+  `lade-api-637`, set as `_RUNTIME_SA` in `cloudbuild.yaml`)
 - **Roles:** **Cloud SQL Client**, **Secret Manager Secret Accessor**
 
 (The website gets read access to just one secret, `PROXY_SECRET`, in step 4.)
