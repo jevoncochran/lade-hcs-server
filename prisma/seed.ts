@@ -1,6 +1,10 @@
-import "dotenv/config";
-import { PrismaPg } from "@prisma/adapter-pg";
-import { CareLevel, PriceChannel, PrismaClient } from "../generated/prisma/client";
+import 'dotenv/config';
+import { PrismaPg } from '@prisma/adapter-pg';
+import {
+  CareLevel,
+  PriceChannel,
+  PrismaClient,
+} from '../src/generated/prisma/client.js';
 
 // Starting rates from Lade's 2026 rate card (public = partner rates for now).
 // Stretcher rate and all no-show / late-cancel fees are proposed, pending
@@ -44,7 +48,10 @@ const startingRates = [
 ];
 
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+  adapter: new PrismaPg({
+    connectionString: process.env.DATABASE_URL,
+    options: '-c TimeZone=UTC', // see PrismaService
+  }),
 });
 
 const main = async () => {

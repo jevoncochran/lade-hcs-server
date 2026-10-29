@@ -1,6 +1,7 @@
 node_modules/
 dist/
-generated/
+*.tsbuildinfo
+src/generated/
 
 # Env files hold secrets. Commit .env.example only.
 .env

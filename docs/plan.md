@@ -17,10 +17,11 @@ Later: 4. notifications (beyond the minimal alerts below), 5. recurring rides, 6
 
 - **API:** NestJS + Prisma (`@prisma/adapter-pg`) + Postgres. `class-validator` DTOs. Same patterns as `sololang-server`.
 - **Hosting:** Google Cloud Run (API) + Cloud SQL Postgres (smallest tier to start). Google BAA (free) accepted in the console.
+- **Hosting decision confirmed 2026-10-24:** Google Cloud for hosting, AWS (us-east-2) for Location Service and SES. The API isn't on AWS, so it can't use an AWS role: in production `SES_ACCESS_KEY_ID` / `SES_SECRET_ACCESS_KEY` (IAM user allowed only `ses:SendEmail`) and `AWS_LOCATION_API_KEY` come from Google Secret Manager like the other secrets.
 - **Secrets / keys:** Google Secret Manager + Cloud KMS.
 - **Mileage:** AWS Location Service (route calculation) in a small separate AWS account with the AWS BAA (free) accepted. Pay per request.
 - **Payments:** Stripe (SetupIntent + off-session PaymentIntent).
-- **Email:** PHI-free messages only (see Notifications), so any provider works; start on a free tier (e.g. Resend).
+- **Email:** Amazon SES under the AWS BAA (customer email addresses are PHI). Development prints emails to the log (`MAIL_TRANSPORT=log`); the SES mailer is built before launch.
 - **Domains:** API on a subdomain of the site's domain (e.g. `api.ladehealthcare.com`) so staff auth cookies work.
 - **Estimated cost at launch:** ~$15–30/month. Upgrade path: bigger Cloud SQL tier (no SLA on the smallest), Cloud Run min-instances=1 to avoid cold starts, HA database later.
 
@@ -30,7 +31,8 @@ Ride data (rider identity + trips to medical appointments, addresses, mobility n
 
 - Every vendor that stores or processes PHI signs a BAA: Google Cloud, AWS. Stripe and the email provider receive **no PHI**.
 - Collect the minimum. No date of birth. Medicaid/insurance IDs not collected (to be revisited).
-- PHI fields encrypted at the application layer (AES-256-GCM via a Prisma client extension, key from KMS). Searchable fields get an HMAC blind index.
+- PHI fields encrypted at the application layer (AES-256-GCM via a Prisma client extension in `src/prisma/encryption.extension.ts`). Searchable fields get an HMAC blind index, computed by the extension. Filtering or sorting on an encrypted field throws. Raw SQL bypasses encryption and must never touch PHI columns.
+- Keys (`ENCRYPTION_KEYS`, `ENCRYPTION_ACTIVE_KEY_ID`, `BLIND_INDEX_KEY`) live in Google Secret Manager in production. **Launch requirement:** production keys backed up outside Google Cloud (e.g. a Lade-controlled password manager). Losing them makes all patient data permanently unreadable.
 - PHI never written to logs, error trackers, emails, or Stripe metadata.
 - Append-only `AuditLog` for PHI access, changes, exports and auth events (DB role has INSERT/SELECT only).
 - Staff MFA required, 15-minute idle logout.
@@ -49,11 +51,14 @@ Public online bookings use the partner rates for now (`PriceChannel.PUBLIC`).
 | Bariatric wheelchair | $125 | $250 | $4.00 | $125 | $62.50 |
 | Stretcher* | $175 | $350 | $5.00 | $175 | $87.50 |
 
-\*Stretcher rate and all no-show / late-cancel fees are **proposed** — pending Lade sign-off. The current rate card says stretcher is "not offered"; Lade is keeping the service and the rate card needs updating.
+\*Stretcher rate and all no-show / late-cancel fees are **tentatively approved** (Jevon, 2026-10-28) for testing and launch prep — **owner approval still needed** (owner session). The current rate card says stretcher is "not offered"; Lade is keeping the service and the rate card needs updating.
 
 Rules:
 
-- Round trip mileage = total billable passenger miles for both legs.
+- Round trip and wait-and-return use the round-trip base fare; mileage = total billable passenger miles for both legs.
+- Billable miles round **up** to the next tenth of a mile (10.01 mi → 10.1 mi); mileage is rounded to the cent.
+- The quote at booking is base fare + mileage. Waiting time is added after the ride.
+- Engine: `src/pricing/pricing.ts` (pure, fully unit-tested); `PricingService` picks the rule in effect (newest started, not ended).
 - **Wait time:** $15 per 15 minutes after a 15-minute grace period; partial increments round up to a full 15 minutes.
 - No charge for companions/escorts. No after-hours or holiday surcharge. Service is 24/7 including holidays.
 - **No-show:** rider not present at pickup. Can only be marked after the 15-minute grace period. Fee = one-way base fare. The return leg is cancelled free.
@@ -76,8 +81,12 @@ Rules:
 
 ## Booking & payment flow
 
-1. `POST /quotes` → price breakdown, or "call for a quote" (long distance, out of state, no pricing rule).
-2. `POST /bookings` (idempotency key, honeypot, rate limited) → server recalculates price, records terms version + acceptance, creates booking `PENDING_PAYMENT`, a Stripe Customer (email only) and a SetupIntent (`usage: off_session`). Returns the client secret.
+1. `POST /quotes` (signed-in customers) → price breakdown, or "call for a quote" with a reason (`SHORT_NOTICE` under 24h, `LONG_DISTANCE`, `OUT_OF_STATE`, `NO_RATE`) and a message to show. Body: care level, trip kind, pickup + drop-off address, pickup time (ISO with time zone). Nothing is stored; an unfindable address returns 422 with `field: pickup|dropoff`. Distances come from `DistanceProvider`. With `MILEAGE_PROVIDER=aws` (`AWS_REGION`, `AWS_LOCATION_API_KEY`: a Location Service API key allowing geo-places Autocomplete/GetPlace/Geocode and geo-routes CalculateRoutes, no referrer restriction), `AwsDistanceProvider` geocodes both addresses (street-level matches only) and uses the car route distance; AWS failures return 503 "try again or call". Address autofill: `GET /addresses/suggest?q=` and `GET /addresses/places/:placeId` (signed-in customers; AWS Places, chosen places fetched with IntendedUse Storage). Otherwise, `EstimatedDistanceProvider` estimates from ZIP codes only: straight line between the two ZIP centers (US Census 2025 ZCTA Gazetteer, Florida only, generated by `scripts/build-zip-centroids.ts`) × 1.3 road factor, minimum 1 mi within a ZIP. Quotes and bookings carry `distanceIsEstimate`, and the website labels those prices as approximate. Out-of-state addresses are refused before any distance lookup.
+2. `POST /bookings` (signed-in customer with a confirmed email) → recalculates the price (never trusts the website), checks 24h notice and return times (round trip: set time or will-call; wait-and-return: optional expected wait), records terms consent, and in one transaction saves the booking (`PENDING_PAYMENT`, reference like `LD-7K3Q9X`), encrypted legs, payment row (`CARD_PENDING`), status event and audit entry. Card setup goes through `PaymentGateway` (stand-in `FakePaymentGateway` until Stripe keys exist; production refuses it). Returns the booking and `{ provider, clientSecret }`. Resubmitting with the same `idempotencyKey` returns the same booking; refusals use the quote reasons (422). Riders have first + last name; staff search by last name. `GET /bookings` lists the customer's bookings (not `PENDING_PAYMENT`); `GET /bookings/:id` (owner only, else 404).
+   - Card step: Stripe's Payment Element on the website confirms the SetupIntent (`confirmSetup`, 3-D Secure in a pop-up), then the website calls `POST /bookings/:id/confirm-card`. The API asks Stripe itself (`checkCardSetup`) and only then calls `BookingsService.markCardSaved` (→ `REQUESTED`). Declined → 422; bank still confirming → stays `PENDING_PAYMENT`.
+   - Backup: `POST /payments/stripe/webhook` (`setup_intent.succeeded`), signature-checked with `STRIPE_WEBHOOK_SECRET`, each event processed once (`StripeEvent`). Optional in development; required in production. Production setup: Stripe Dashboard → Webhooks → endpoint `https://<api>/payments/stripe/webhook`.
+   - `PAYMENT_PROVIDER=stripe` with `STRIPE_SECRET_KEY` (sk_test_ in development, sk_live_ required in production); the website needs `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`. `PAYMENT_PROVIDER=fake` still works locally without Stripe.
+   - Website: `/book-a-ride` runs trip details → live quote / "call us" → review + terms → card (test mode) → confirmation; My Account lists the customer's rides.
 3. Site confirms the card with the Stripe Payment Element. Webhook `setup_intent.succeeded` → booking `REQUESTED`, payment `CARD_SAVED`, PHI-free staff alert email.
 4. Abandoned `PENDING_PAYMENT` bookings are deleted after 1 hour.
 5. Staff confirm → `CONFIRMED` + confirmation email with manage link. Staff decline → `CANCELLED`, payment method detached, no charge.
@@ -101,28 +110,62 @@ Rules:
 
 Every transition writes a `BookingEvent` and an `AuditLog` entry.
 
-## Customer booking management (no accounts)
+## Customer accounts
 
-- Confirmation email contains a "Manage your ride" link with a random token (stored hashed), expiring 7 days after the last leg.
-- Page shows reference, status, times, care level, price, partially masked addresses.
-- Customer can cancel online (late-cancel fee shown before confirming). Rescheduling is by phone in v1.
-- Lost link: enter reference + email → link re-sent to the email on file. Rate limited; response never reveals whether a booking exists.
+Customers must create an account to book (decided 2026-10-09). Guest booking may be added later; `Booking.customerId` is optional for that reason.
+
+- Sign-up: first name, last name, email, phone, password (8+ chars, argon2id), terms acceptance (`TERMS_VERSION`). Email must be verified (24h link) before booking.
+- Responses never reveal whether an email has an account (sign-up, resend, forgot password).
+- Login: email + password; 5 failures → 15-minute lock. MFA optional for customers (not built yet).
+- Sessions: server-side, httpOnly `lade_sid` cookie; end after 7 days idle or 30 days.
+- Password reset: 1-hour one-time link; signs out every session.
+- Email, first name, last name and phone are encrypted (being a Lade customer is PHI); lookup via `emailHash`.
+- Endpoints: `POST /auth/signup`, `/auth/verify-email`, `/auth/verify-email/resend`, `/auth/login`, `/auth/logout`, `/auth/forgot-password`, `/auth/reset-password`; `GET /auth/me`.
+- My rides: `GET /bookings` and `GET /bookings/:id` return each ride with leg progress, final charges (no staff notes), payment status and `cancel: { allowed, feeCents }`. Website: `/my-rides` (upcoming / past) and `/my-rides/<id>`.
+- Customer cancellation: `POST /bookings/:id/cancel` `{ reason?, acceptedFeeCents? }`. Allowed for REQUESTED or CONFIRMED rides until the pickup time (after that: call). Free for requests and until `LATE_CANCEL_WINDOW_MINUTES` before a confirmed pickup; then the late-cancellation fee, charged only if `acceptedFeeCents` covers it (otherwise 409 with the fee, so nobody pays a fee they didn't see). Emails the customer and all active staff. Shared with staff cancellation: `src/bookings/booking-status.ts`.
+- The "manage your ride" link for guests (`Booking.manageToken*`) waits until guest booking is built.
 
 ## Staff auth
 
-- Email + password (min 12 chars, argon2id) + required TOTP MFA.
-- 15-minute access tokens with sliding refresh; 15-minute idle logout. Tokens in httpOnly cookies.
-- 5 failed logins → 15-minute lockout. All attempts audited.
-- First admin created by a CLI seed script. Further staff invited by an admin via a one-time 48-hour link (set password + MFA).
-- Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections.
+- Accounts are only created by accepting an invite (48h, one-time link). The first ones come from the bootstrap command: `npm run staff:invite -- --email <email> --role ADMIN`. Later, admins invite from `/admin`.
+- Accepting: scan the authenticator QR code and confirm a 6-digit code first (checked right away), then set name + password. Nobody else ever knows the password or MFA secret.
+- Login: email + password + TOTP code (required). Used codes can't be replayed. 5 failures → 15-minute lock.
+- Sessions: server-side, httpOnly `lade_staff_sid` cookie (separate from customers); end after 15 minutes idle (HIPAA automatic logoff), 12 hours, or when the account is deactivated.
+- Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections. Initial admins: Jevon and the two owners.
+- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/verify-code`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
+- Staff management (admins only, `AdminGuard` after `StaffAuthGuard`; website `/admin/staff`): `GET /staff/members` (members + pending invite/reset links), `POST /staff/invites` `{ email, role }` (emails the link and returns it), `POST /staff/invites/:id/revoke`, `POST /staff/members/:id/role` `{ role }`, `/deactivate` (ends their sessions and pending reset), `/reactivate`, `/reset-sign-in`. An admin can't act on their own account; there's always one active admin (role/activation changes are serializable transactions, so two admins demoting each other at once can't both succeed). All audited.
+- Live updates: open booking pages (staff list and booking, customer My rides and ride) ask `GET /staff/bookings/changes` or `GET /bookings/changes` every 10 s while visible and reload when the short version string changes (`src/bookings/bookings-version.ts`: counts and last-change times only, no PHI, not audited). These are `@BackgroundCheck()` endpoints: they don't count as session activity, so the 15-minute staff logoff still applies. WebSockets were considered and left for later (an open socket keeps Cloud Run billing ~$25–60/month; the pages wouldn't need rewriting to switch).
+- Database sessions are forced to UTC (`PrismaService`): the Postgres adapter sends and reads times without a zone, so a non-UTC server default (a local Postgres.app was America/Bogota) stored every time shifted. Cloud SQL defaults to UTC anyway.
+- Sign-in reset (forgotten password, lost phone, locked out): a `StaffInvite` with `resetForId`. The setup page, in two steps (phone → password; the name is kept) replaces that account's password and authenticator, clears any lockout and ends all its sessions. Until it's used, the old sign-in still works. Only the newest reset link works.
+- Viewing bookings (dispatchers and admins): `GET /staff/bookings` lists by outbound pickup time (`sort=pickup`, default) or `sort=newest`, filtered by `status` (default: all but `PENDING_PAYMENT`), pickup days `from`/`to` (YYYY-MM-DD in `BUSINESS_TIMEZONE`, inclusive; with no dates and no search, today onward), exact `reference` or exact `riderLastName` (blind index), paged (`page`, `pageSize` ≤ 100). Rows are summaries; `GET /staff/bookings/:id` adds requester, payment, leg progress and status history. Both are `no-store` and every view is audited (`staff.bookings_listed` with the booking ids, `staff.booking_viewed`), without PHI.
+- Actions (`POST /staff/bookings/:id/…`, each returns the updated booking with `actions`: what's allowed right now, from `staff-bookings/booking-actions.ts`):
+  - `confirm`: REQUESTED → CONFIRMED.
+  - `cancel` `{ reason, waiveFee?, waiveReason? }`: REQUESTED or CONFIRMED → CANCELLED, legs cancelled. Confirmed rides inside `LATE_CANCEL_WINDOW_MINUTES` get a `LATE_CANCELLATION` charge; admins can waive it (an `ADJUSTMENT` line for the same negative amount, with the reason).
+  - `no-show`: CONFIRMED → NO_SHOW, only from pickup + grace period; `NO_SHOW` fee on the outbound leg, ride back cancelled free.
+  - `complete` `{ outboundWaitMinutes?, returnLeg?: COMPLETED|CANCELLED, returnWaitMinutes? }`: CONFIRMED → COMPLETED, only from the pickup time. Charges base fare + mileage for the legs that happened (`completedRideCharges`: a round trip without its ride back is billed one-way) + waiting time per leg.
+  - `retry-charge`: for a final booking whose payment is `FAILED` or `CHARGE_PENDING`.
+  - Status changes are conditional updates (two staff at once → 409), with a `BookingEvent` (reason in its encrypted note) and an audit entry without PHI.
+- Charging (`payments/booking-payments.service.ts`): after each action, the saved card is charged off-session for the sum of the booking's `BookingCharge` lines. The payment is claimed as `CHARGE_PENDING` first; the Stripe idempotency key is `charge-<paymentId>-<attempt>` (new attempt only after a decline), so a retry after a lost answer can't charge twice. Declines → `FAILED` with Stripe's code; nothing owed → `CANCELED` and the card is detached. Not yet: emailing the customer a pay link after a decline, refunds and admin adjustments after charging, `payment_intent.*` webhooks.
 - Admin screens live at `/admin` in the Next.js site, never cached, `noindex`.
+
+## Request security
+
+- Every state-changing request must carry `Origin: SITE_URL` (CSRF protection), except endpoints marked `@SkipOriginCheck()` such as future Stripe webhooks.
+- Rate limits per IP: 300/min overall, `AUTH_RATE_LIMIT_PER_MINUTE` (10) per auth endpoint. In memory per instance.
+- Every login, failed login, sign-up, verification, reset and invite is in the audit log, with no PHI.
 
 ## Notifications (phases 1–3)
 
-PHI-free only:
+Email goes through the `Mailer` token: `LogMailer` (`MAIL_TRANSPORT=log`, prints to the log; development and tests) or `SesMailer` (`MAIL_TRANSPORT=ses`, Amazon SES v2 in `AWS_REGION`, us-east-2 / Ohio, where `ladehcs.com` is verified). Sender `MAIL_FROM` (default `Lade Health Care Services <no-reply@ladehcs.com>`), optional `MAIL_REPLY_TO`. Credentials: `SES_ACCESS_KEY_ID` / `SES_SECRET_ACCESS_KEY` of an IAM user allowed only `ses:SendEmail` (local and non-AWS hosting); empty on AWS hosting with a role. Recipient addresses never go in logs.
 
-- Staff alert: "New booking LD-7K3Q9 — log in to view."
-- Customer: confirmation / cancellation with the manage link; payment-failed with a pay link. No names, addresses, medical details.
+Booking emails (`src/notifications/booking-notifications.service.ts`, texts in `src/mail/booking-templates.ts`) carry only the booking reference, amounts and links: no names, addresses, times or medical details. A failed email is logged with the booking id and never blocks the booking change.
+
+- Card saved (once, website or webhook): customer "request received"; every active staff member "New ride request LD-…" with a link to the booking.
+- Staff confirm / cancel / no-show / complete: customer email; fees say whether the card was charged. Completed + charged → receipt. A declined charge → "we couldn't charge your card" with a link to /contact. Retry that succeeds → receipt.
+
+Contact form: the website posts to `POST /contact` (public, strict per-IP rate limit, Origin check, honeypot); the API emails it to `CONTACT_INBOX` (default info@ladehcs.com, a Google Workspace mailbox under its BAA) through SES with the visitor as reply-to. Nothing stored or logged.
+
+Before launch: SES production access (out of the sandbox), a real reply-to inbox (ladehcs.com has no MX records), SES bounce/complaint handling (configuration set + notifications).
 
 ## Schema
 
@@ -141,17 +184,39 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 
 **Lade:**
 
-- Sign off on the stretcher rate and no-show / late-cancel fees; update the rate card (add stretcher and no-show / late-cancel fees).
+- ~~Accept the AWS BAA~~ — done 2026-10-20. The account (created with Google sign-up) needed the paid plan **and** "Activate advanced features" before Artifact worked. Keep the downloaded BAA PDF in Lade's records.
+- ~~Accept the Google Cloud BAA~~ — done 2026-10-28 (console.cloud.google.com/iam-admin/privacy → "Google Cloud Platform HIPAA Business Associate Addendum"). Keep the screenshot in Lade's records.
+- ~~SES production access~~ — already granted (confirmed 2026-10-28).
+- ~~Accept the Google Workspace BAA~~ — done 2026-10-28 (admin.google.com → Account settings → Legal and compliance). Keep the screenshot in Lade's records.
+- **Launch blocker (deferred, do with the owner):** activate Stripe live mode — business details, owner identity, payout bank account, statement descriptor (e.g. `LADE HEALTH CARE`), support phone/email; then live keys (`pk_live_…` for the website, `sk_live_…` straight into Secret Manager, never pasted anywhere). Production config refuses test keys, so either do this before the deploy or deploy as a clearly labeled test site first.
+- **Launch blocker:** add two DNS records at Network Solutions (where ladehcs.com's DNS is), so Lade's emails don't go to spam. As of 2026-10-23 the domain has neither:
+  - SPF, a TXT record on `ladehcs.com`: `v=spf1 include:_spf.google.com include:amazonses.com ~all` (Google Workspace and Amazon SES may send as ladehcs.com). Only one SPF record per domain: merge with any existing one.
+  - DMARC, a TXT record on `_dmarc.ladehcs.com`: `v=DMARC1; p=none; rua=mailto:info@ladehcs.com` (monitor-only, reports to info@; tighten later).
+  - Check afterwards: `dig +short TXT ladehcs.com` and `dig +short TXT _dmarc.ladehcs.com`.
+
+- **Owner session:** approve the stretcher rate and no-show / late-cancel fees (tentatively approved 2026-10-28; the Terms show them with a "pending approval" marker); update the rate card (add stretcher and no-show / late-cancel fees).
 - Terms of service + privacy notice covering wait time, no-show and late-cancel rules (checkout consent depends on it).
 - Records retention period (HIPAA documentation is 6 years; check Florida requirements).
-- Whether to collect Medicaid / insurance IDs.
-- BAA between Lade and Jevon. Lade should own the Google Cloud, AWS and Stripe accounts.
+- **Owner session:** how Lade takes **Medicaid and private insurance** today (broker such as a Medicaid transportation broker, or billing insurers directly), and how payment is secured for those riders. The website says Lade accepts Medicaid, insurance, cash and cards, with online booking card-only and Medicaid/insurance trips booked by phone. Decides whether to collect Medicaid / insurance IDs later.
+- **Owner session (nice to have):** the logo as a transparent PNG or SVG. The current file has a solid background, which shows as a white box on the dark footer (`src/components/Logo.tsx` in the website).
+- If Lade bills Medicaid or insurance, it is almost certainly a **HIPAA covered entity**: the attorney should confirm, and Lade likely needs a formal **Notice of Privacy Practices** in addition to the website Privacy Notice.
+- **Deferred (after the website and deploy):** BAA between Lade and Jevon (developer with system access). Option: Claude drafts it from the HHS sample provisions; Lade's attorney reviews; both sign (owner session). Lade should own the Google Cloud, AWS and Stripe accounts.
 
 **Website (`lade-healthcare-services`):**
 
-- Replace placeholders in `src/lib/site.ts` with real details from the rate card (5100 N Nebraska Ave, Tampa, FL 33603; (708) 735-5701; info@ladehcs.com).
+- **Confirm with the owner:** the site now uses the rate card's phone **(708) 735-5701** and address **5100 N Nebraska Ave, Tampa, FL 33603** (`src/lib/site.ts`, also shown in the Terms and Privacy contact sections). Still a placeholder: the service area.
+- Terms of Service (`/terms`) and Privacy Notice (`/privacy`) are DRAFTS (yellow banner). Before launch: Lade fills in the legal entity name, approves the fee table and retention period, an attorney reviews the marked sections (liability, venue, whether a HIPAA Notice of Privacy Practices is needed); then remove `draft` and bump `TERMS_VERSION` on the API.
 - Add Bariatric wheelchair as a care level.
 - `/book-a-ride` page (phase 2) and `/admin` section (phase 3).
+
+**Jevon (later):**
+
+- Limit the **Google Cloud Build** GitHub app to the two Lade repos (github.com → Settings → Applications → Installed GitHub Apps → Google Cloud Build → Configure → Only select repositories: `lade-healthcare-services`, `lade-hcs-server`). It was installed with access to all of Jevon's repositories.
+- After getting Google Cloud access: consider setting the project's "Domain restricted sharing" organization policy back to **Inherit parent's policy** (it was overridden to Allow All so a personal Gmail could be added).
+
+**Engineering:**
+
+- Re-encryption job for key rotation (re-encrypt rows still on an old key id).
 
 **Engineering before phase 1:**
 

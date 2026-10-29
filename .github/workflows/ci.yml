@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only token: CI never needs to write to the repo.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      # Throwaway database for e2e tests. Never real patient data.
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lade
+          POSTGRES_PASSWORD: lade
+          POSTGRES_DB: lade_hcs_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lade"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      # Also generates the Prisma client (postinstall).
+      - run: npm ci
+
+      # Fresh random keys every run: CI data is throwaway, so no secrets needed.
+      - name: Create .env.test
+        run: |
+          {
+            echo 'NODE_ENV=test'
+            echo 'DATABASE_URL=postgresql://lade:lade@localhost:5432/lade_hcs_test'
+            echo 'SITE_URL=http://localhost:3000'
+            npm run -s keys:generate
+          } > .env.test
+
+      - run: npm run test:db:prepare
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm run format:check
+      - run: npm test
+      - run: npm run test:e2e
+      - run: npm run build
