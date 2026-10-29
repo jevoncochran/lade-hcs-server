@@ -147,10 +147,24 @@ These stay set across future website deploys.
 - **Visitor addresses:** after a sign-in, check the latest audit-log entry's
   IP is yours (not Google's). If not, adjust `TRUST_PROXY_HOPS` (default 2).
 
-## 9. First admin accounts
+## 9. Staff accounts (first admins, or any time)
 
-Admins are created with an invite link. In production that runs as a Cloud
-Run job against the live database (instructions to follow when we get there).
+Staff accounts come from one-time invite links. In production they're made by
+the Cloud Run job `lade-staff-invite` (every API deploy updates it; it only
+runs when started), against the live database:
+
+1. Cloud Run → **Jobs** → `lade-staff-invite` → **Execute** ▸ **Execute with
+   overrides**.
+2. **Container arguments:** replace them with
+   `dist/cli/staff-invite.js --email person@example.com --role ADMIN`
+   (or `--role DISPATCHER`).
+3. **Execute**, wait for it to finish, open the execution's **Logs**: the
+   invite link is printed there (works once, 48 hours).
+4. Send the link privately (text or call). They open it, connect their phone
+   and choose a password.
+
+After the first admin exists, admins can invite staff from the website
+(`/admin/staff`) instead, which also emails the link.
 
 ## Later: going live (owner session)
 

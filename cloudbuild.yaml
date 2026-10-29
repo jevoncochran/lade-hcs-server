@@ -63,18 +63,43 @@ steps:
       - -c
       - |
         set -e
+        # The API's settings and secrets, shared by the service and the
+        # staff-invite job. ($$ is a plain $ for bash, not a substitution.)
+        ENV_VARS="SITE_URL=${_SITE_URL},ALLOW_TEST_PAYMENTS=${_ALLOW_TEST_PAYMENTS},MAIL_TRANSPORT=ses,MAIL_REPLY_TO=info@ladehcs.com,AWS_REGION=us-east-2,MILEAGE_PROVIDER=aws,PAYMENT_PROVIDER=stripe,ENCRYPTION_ACTIVE_KEY_ID=k1"
+        SECRETS="DATABASE_URL=DATABASE_URL:latest,ENCRYPTION_KEYS=ENCRYPTION_KEYS:latest,BLIND_INDEX_KEY=BLIND_INDEX_KEY:latest,PROXY_SECRET=PROXY_SECRET:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY:latest,SES_ACCESS_KEY_ID=SES_ACCESS_KEY_ID:latest,SES_SECRET_ACCESS_KEY=SES_SECRET_ACCESS_KEY:latest,AWS_LOCATION_API_KEY=AWS_LOCATION_API_KEY:latest"
+        IMAGE=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
+        RUNTIME_SA=${_RUNTIME_SA}@$PROJECT_ID.iam.gserviceaccount.com
+        SQL=$PROJECT_ID:${_REGION}:${_SQL_INSTANCE}
+
         gcloud run deploy ${_SERVICE} \
           --region=${_REGION} \
-          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA \
-          --service-account=${_RUNTIME_SA}@$PROJECT_ID.iam.gserviceaccount.com \
-          --add-cloudsql-instances=$PROJECT_ID:${_REGION}:${_SQL_INSTANCE} \
+          --image=$$IMAGE \
+          --service-account=$$RUNTIME_SA \
+          --add-cloudsql-instances=$$SQL \
           --allow-unauthenticated \
           --max-instances=1 \
-          --set-env-vars=SITE_URL=${_SITE_URL},ALLOW_TEST_PAYMENTS=${_ALLOW_TEST_PAYMENTS},MAIL_TRANSPORT=ses,MAIL_REPLY_TO=info@ladehcs.com,AWS_REGION=us-east-2,MILEAGE_PROVIDER=aws,PAYMENT_PROVIDER=stripe,ENCRYPTION_ACTIVE_KEY_ID=k1 \
-          --set-secrets=DATABASE_URL=DATABASE_URL:latest,ENCRYPTION_KEYS=ENCRYPTION_KEYS:latest,BLIND_INDEX_KEY=BLIND_INDEX_KEY:latest,PROXY_SECRET=PROXY_SECRET:latest,STRIPE_SECRET_KEY=STRIPE_SECRET_KEY:latest,STRIPE_PUBLISHABLE_KEY=STRIPE_PUBLISHABLE_KEY:latest,SES_ACCESS_KEY_ID=SES_ACCESS_KEY_ID:latest,SES_SECRET_ACCESS_KEY=SES_SECRET_ACCESS_KEY:latest,AWS_LOCATION_API_KEY=AWS_LOCATION_API_KEY:latest
+          --set-env-vars="$$ENV_VARS" \
+          --set-secrets="$$SECRETS"
 
-# At launch (live Stripe keys): add the webhook signing secret to the API's
-# secrets above: STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
+        # Creates staff invite links against the live database (deployed,
+        # never run here). Run it from the console: Cloud Run → Jobs →
+        # lade-staff-invite → Execute with overrides → arguments
+        #   dist/cli/staff-invite.js --email someone@example.com --role ADMIN
+        # The link is printed in the execution's logs. See docs/deploy.md.
+        gcloud run jobs deploy lade-staff-invite \
+          --region=${_REGION} \
+          --image=$$IMAGE \
+          --service-account=$$RUNTIME_SA \
+          --set-cloudsql-instances=$$SQL \
+          --set-env-vars="$$ENV_VARS" \
+          --set-secrets="$$SECRETS" \
+          --command=node \
+          --args=dist/cli/staff-invite.js \
+          --max-retries=0 \
+          --task-timeout=5m
+
+# At launch (live Stripe keys): add the webhook signing secret to SECRETS
+# above: STRIPE_WEBHOOK_SECRET=STRIPE_WEBHOOK_SECRET:latest
 
 images:
   - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
