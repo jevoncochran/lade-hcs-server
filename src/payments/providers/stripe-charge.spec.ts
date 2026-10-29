@@ -21,7 +21,10 @@ const gatewayWith = (create: (...args: unknown[]) => Promise<unknown>) => {
       },
     },
   } as unknown as Stripe;
-  return { gateway: new StripePaymentGateway(stripe), calls };
+  return {
+    gateway: new StripePaymentGateway(stripe, { publishableKey: 'pk_test_x' }),
+    calls,
+  };
 };
 
 describe('StripePaymentGateway.chargeSavedCard', () => {

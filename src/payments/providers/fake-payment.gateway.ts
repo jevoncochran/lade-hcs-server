@@ -20,6 +20,7 @@ const id = (prefix: string) =>
 @Injectable()
 export class FakePaymentGateway extends PaymentGateway {
   readonly provider = 'fake' as const;
+  readonly publishableKey = null;
 
   async createCustomer() {
     return { id: id('fake_cus') };

@@ -159,7 +159,11 @@ describe('validateEnv', () => {
   });
 
   describe('Stripe', () => {
-    const stripe = { ...required, PAYMENT_PROVIDER: 'stripe' };
+    const stripe = {
+      ...required,
+      PAYMENT_PROVIDER: 'stripe',
+      STRIPE_PUBLISHABLE_KEY: 'pk_test_abc123',
+    };
 
     it('accepts a test key in development', () => {
       expect(() =>
@@ -172,6 +176,23 @@ describe('validateEnv', () => {
       expect(() =>
         validateEnv({ ...stripe, STRIPE_SECRET_KEY: 'pk_test_abc' }),
       ).toThrow(/STRIPE_SECRET_KEY must be/);
+    });
+
+    it('requires a publishable key in the same mode as the secret key', () => {
+      expect(() =>
+        validateEnv({
+          ...stripe,
+          STRIPE_SECRET_KEY: 'sk_test_abc',
+          STRIPE_PUBLISHABLE_KEY: '',
+        }),
+      ).toThrow(/STRIPE_PUBLISHABLE_KEY must be/);
+      expect(() =>
+        validateEnv({
+          ...stripe,
+          STRIPE_SECRET_KEY: 'sk_test_abc',
+          STRIPE_PUBLISHABLE_KEY: 'pk_live_abc',
+        }),
+      ).toThrow(/both be test keys or both be live keys/);
     });
 
     it('checks the webhook secret format', () => {
@@ -200,6 +221,51 @@ describe('validateEnv', () => {
       expect(error).toMatch(/live Stripe key/);
       expect(error).toMatch(/STRIPE_WEBHOOK_SECRET/);
       expect(error).not.toContain('sk_test_abc');
+    });
+  });
+
+  describe('production deploy', () => {
+    const production = {
+      ...required,
+      NODE_ENV: 'production',
+      MAIL_TRANSPORT: 'ses',
+      MILEAGE_PROVIDER: 'aws',
+      AWS_LOCATION_API_KEY: 'key',
+      PAYMENT_PROVIDER: 'stripe',
+      STRIPE_SECRET_KEY: 'sk_live_abc',
+      STRIPE_PUBLISHABLE_KEY: 'pk_live_abc',
+      STRIPE_WEBHOOK_SECRET: 'whsec_abc',
+      PROXY_SECRET: 'p'.repeat(32),
+    };
+
+    it('starts with everything real', () => {
+      expect(() => validateEnv(production)).not.toThrow();
+    });
+
+    it('needs a proxy secret of at least 32 characters', () => {
+      expect(() =>
+        validateEnv({ ...production, PROXY_SECRET: undefined }),
+      ).toThrow(/needs PROXY_SECRET/);
+      expect(() =>
+        validateEnv({ ...production, PROXY_SECRET: 'short' }),
+      ).toThrow(/at least 32 characters/);
+    });
+
+    it('allows Stripe test keys only when ALLOW_TEST_PAYMENTS is on', () => {
+      const testKeys = {
+        ...production,
+        STRIPE_SECRET_KEY: 'sk_test_abc',
+        STRIPE_PUBLISHABLE_KEY: 'pk_test_abc',
+        STRIPE_WEBHOOK_SECRET: undefined,
+      };
+      expect(() => validateEnv(testKeys)).toThrow(/live Stripe key/);
+      expect(() =>
+        validateEnv({ ...testKeys, ALLOW_TEST_PAYMENTS: 'true' }),
+      ).not.toThrow();
+    });
+
+    it('trusts two proxies by default (Google + the website)', () => {
+      expect(validateEnv(production).TRUST_PROXY_HOPS).toBe(2);
     });
   });
 

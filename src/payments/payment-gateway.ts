@@ -8,6 +8,10 @@
 export abstract class PaymentGateway {
   abstract readonly provider: 'fake' | 'stripe';
 
+  // The key the website's card form needs (Stripe's publishable key), or
+  // null when there's no card form (the fake gateway).
+  abstract readonly publishableKey: string | null;
+
   // A customer record at the provider, so saved cards can be reused.
   abstract createCustomer(input: {
     customerId: string;

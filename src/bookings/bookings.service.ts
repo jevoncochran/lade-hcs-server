@@ -178,6 +178,7 @@ export class BookingsService {
           booking: toBookingView(booking),
           payment: {
             provider: this.payments.provider,
+            publishableKey: this.payments.publishableKey,
             clientSecret: cardSetup.clientSecret,
           },
         };
@@ -661,6 +662,7 @@ export class BookingsService {
       payment: pending
         ? {
             provider: this.payments.provider,
+            publishableKey: this.payments.publishableKey,
             clientSecret: (
               await this.payments.retrieveCardSetup(
                 payment.stripeSetupIntentId!,

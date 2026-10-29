@@ -135,6 +135,7 @@ describe('Bookings (e2e)', () => {
       });
       expect(payment).toEqual({
         provider: 'fake',
+        publishableKey: null, // no card form with the fake gateway
         clientSecret: expect.stringMatching(/^fake_seti_.+_secret_fake$/),
       });
 

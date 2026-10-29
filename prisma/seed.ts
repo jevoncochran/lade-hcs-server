@@ -48,7 +48,10 @@ const startingRates = [
 ];
 
 const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+  adapter: new PrismaPg({
+    connectionString: process.env.DATABASE_URL,
+    options: '-c TimeZone=UTC', // see PrismaService
+  }),
 });
 
 const main = async () => {

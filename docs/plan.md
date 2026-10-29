@@ -209,6 +209,11 @@ The source of truth is [`prisma/schema.prisma`](../prisma/schema.prisma). Summar
 - Add Bariatric wheelchair as a care level.
 - `/book-a-ride` page (phase 2) and `/admin` section (phase 3).
 
+**Jevon (later):**
+
+- Limit the **Google Cloud Build** GitHub app to the two Lade repos (github.com → Settings → Applications → Installed GitHub Apps → Google Cloud Build → Configure → Only select repositories: `lade-healthcare-services`, `lade-hcs-server`). It was installed with access to all of Jevon's repositories.
+- After getting Google Cloud access: consider setting the project's "Domain restricted sharing" organization policy back to **Inherit parent's policy** (it was overridden to Allow All so a personal Gmail could be added).
+
 **Engineering:**
 
 - Re-encryption job for key rotation (re-encrypt rows still on an old key id).

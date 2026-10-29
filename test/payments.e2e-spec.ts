@@ -30,7 +30,10 @@ class TestStripeGateway extends StripePaymentGateway {
   };
 
   constructor() {
-    super(new Stripe('sk_test_not_used'), WEBHOOK_SECRET);
+    super(new Stripe('sk_test_not_used'), {
+      publishableKey: 'pk_test_card_form',
+      webhookSecret: WEBHOOK_SECRET,
+    });
   }
   override async createCustomer() {
     this.customersCreated++;
@@ -160,6 +163,8 @@ describe('Card payments (e2e)', () => {
     expect(payment).toEqual({
       provider: 'stripe',
       clientSecret: expect.stringMatching(/^seti_.+_secret_test$/),
+      // Matches the secret key's mode; the website's card form uses it.
+      publishableKey: 'pk_test_card_form',
     });
   });
 

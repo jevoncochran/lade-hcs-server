@@ -12,12 +12,19 @@ import {
 export class StripePaymentGateway extends PaymentGateway {
   readonly provider = 'stripe' as const;
 
+  readonly publishableKey: string;
+  // Optional in development; see STRIPE_WEBHOOK_SECRET.
+  private readonly webhookSecret?: string;
+
+  // Keys by name: they're all plain strings, so positional arguments could
+  // be swapped without any type error.
   constructor(
     private readonly stripe: Stripe,
-    // Optional in development; see STRIPE_WEBHOOK_SECRET.
-    private readonly webhookSecret?: string,
+    keys: { publishableKey: string; webhookSecret?: string },
   ) {
     super();
+    this.publishableKey = keys.publishableKey;
+    this.webhookSecret = keys.webhookSecret;
   }
 
   async createCustomer(input: { customerId: string; email: string }) {

@@ -20,7 +20,13 @@ import { StripePaymentGateway } from './providers/stripe-payment.gateway.js';
         // Stripe library pins its own API version.
         return new StripePaymentGateway(
           new Stripe(config.get('STRIPE_SECRET_KEY', { infer: true })!),
-          config.get('STRIPE_WEBHOOK_SECRET', { infer: true }) || undefined,
+          {
+            publishableKey: config.get('STRIPE_PUBLISHABLE_KEY', {
+              infer: true,
+            })!,
+            webhookSecret:
+              config.get('STRIPE_WEBHOOK_SECRET', { infer: true }) || undefined,
+          },
         );
       },
     },

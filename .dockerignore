@@ -1,0 +1,11 @@
+# Kept out of the image (and out of what's uploaded to Cloud Build).
+node_modules
+dist
+src/generated
+coverage
+.git
+.github
+.env*
+!.env.example
+*.log
+.DS_Store

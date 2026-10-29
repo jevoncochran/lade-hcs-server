@@ -1,5 +1,6 @@
 import { plainToInstance, Transform, Type } from 'class-transformer';
 import {
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsIn,
@@ -10,6 +11,7 @@ import {
   Matches,
   Max,
   Min,
+  MinLength,
   validateSync,
   type ValidationError,
 } from 'class-validator';
@@ -39,6 +41,33 @@ export class Env {
   @Min(1)
   @Max(65535)
   PORT = 4000;
+
+  // Shared secret the website adds to every request it forwards to the API
+  // (header x-lade-proxy). When set, the API refuses requests without it
+  // (except GET /health), so it's only reachable through the website even
+  // though its Cloud Run address is public. Required in production.
+  @IsOptional()
+  @IsString()
+  @MinLength(32, { message: 'PROXY_SECRET must be at least 32 characters' })
+  PROXY_SECRET?: string;
+
+  // Proxies between visitors and the API that add to X-Forwarded-For, so the
+  // API sees each visitor's real address (rate limits, audit log). On Cloud
+  // Run behind the website: Google's front end for the website, then for the
+  // API = 2. Production only.
+  @Type(() => Number)
+  @IsInt()
+  @Min(0)
+  @Max(5)
+  TRUST_PROXY_HOPS = 2;
+
+  // Lets production run with Stripe TEST keys while the site is still being
+  // tested (no real money moves). Turn off at launch, with live keys.
+  @Transform(
+    ({ value }: { value: unknown }) => value === true || value === 'true',
+  )
+  @IsBoolean()
+  ALLOW_TEST_PAYMENTS = false;
 
   @Matches(/^postgres(ql)?:\/\/.+/, {
     message: 'DATABASE_URL must be a postgres:// or postgresql:// URL',
@@ -120,6 +149,13 @@ export class Env {
   @IsString()
   STRIPE_SECRET_KEY?: string;
 
+  // Stripe publishable key (pk_test_… / pk_live_…, same mode as the secret
+  // key). Not secret: the API hands it to the website's card form with each
+  // card setup, so test/live is switched here only.
+  @IsOptional()
+  @IsString()
+  STRIPE_PUBLISHABLE_KEY?: string;
+
   // Signing secret of the Stripe webhook endpoint (whsec_…). Optional in
   // development: the website confirms saved cards directly; the webhook is
   // the production backup.
@@ -180,6 +216,7 @@ export class Env {
 // Values never echoed in error messages: they'd end up in deploy logs.
 const SECRET_SETTINGS = new Set([
   'DATABASE_URL',
+  'PROXY_SECRET',
   'AWS_LOCATION_API_KEY',
   'SES_SECRET_ACCESS_KEY',
   'STRIPE_SECRET_KEY',
@@ -259,6 +296,20 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
         '  - STRIPE_SECRET_KEY must be a Stripe secret key (sk_test_… or sk_live_…) when PAYMENT_PROVIDER is "stripe"',
       );
     }
+    const publishable = env.STRIPE_PUBLISHABLE_KEY ?? '';
+    if (!/^pk_(test|live)_\w+$/.test(publishable)) {
+      messages.push(
+        '  - STRIPE_PUBLISHABLE_KEY must be a Stripe publishable key (pk_test_… or pk_live_…) when PAYMENT_PROVIDER is "stripe"',
+      );
+    } else if (
+      env.STRIPE_SECRET_KEY &&
+      publishable.startsWith('pk_live_') !==
+        env.STRIPE_SECRET_KEY.startsWith('sk_live_')
+    ) {
+      messages.push(
+        '  - STRIPE_PUBLISHABLE_KEY and STRIPE_SECRET_KEY must both be test keys or both be live keys',
+      );
+    }
     // An empty value (e.g. "STRIPE_WEBHOOK_SECRET=" in .env) means not set.
     if (
       env.STRIPE_WEBHOOK_SECRET &&
@@ -280,10 +331,13 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
         '  - PAYMENT_PROVIDER "fake" never saves or charges cards; production needs Stripe',
       );
     } else {
-      if (!env.STRIPE_SECRET_KEY?.startsWith('sk_live_')) {
+      if (
+        !env.ALLOW_TEST_PAYMENTS &&
+        !env.STRIPE_SECRET_KEY?.startsWith('sk_live_')
+      ) {
         messages.push('  - Production needs a live Stripe key (sk_live_…)');
       }
-      if (!env.STRIPE_WEBHOOK_SECRET) {
+      if (!env.ALLOW_TEST_PAYMENTS && !env.STRIPE_WEBHOOK_SECRET) {
         messages.push(
           '  - Production needs STRIPE_WEBHOOK_SECRET so saved cards are confirmed even if the customer closes the page',
         );
@@ -292,6 +346,11 @@ export const validateEnv = (raw: Record<string, unknown>): Env => {
     if (env.MILEAGE_PROVIDER === 'estimate') {
       messages.push(
         '  - MILEAGE_PROVIDER "estimate" makes up distances; production needs real ones',
+      );
+    }
+    if (!env.PROXY_SECRET) {
+      messages.push(
+        '  - Production needs PROXY_SECRET so only the website can reach the API',
       );
     }
   }

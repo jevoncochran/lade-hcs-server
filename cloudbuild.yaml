@@ -1,0 +1,78 @@
+# Deploys the API on every push to `main` (a Cloud Build trigger runs this;
+# see docs/deploy.md):
+#   1. build the image and push it to Artifact Registry
+#   2. update the database: run job `lade-db-migrate` (migrations, then the
+#      starting prices; both safe to re-run). If it fails, nothing is deployed.
+#   3. deploy service `lade-api` with that image
+#
+# Secrets are referenced by name only; their values live in Secret Manager.
+# Change a setting here (or with a substitution in the trigger), not in the
+# Cloud Run console: each deploy re-applies this file.
+
+substitutions:
+  _REGION: us-east1
+  _SERVICE: lade-api
+  _JOB: lade-db-migrate
+  _AR_REPO: cloud-run-source-deploy
+  _SQL_INSTANCE: lade-db
+  _RUNTIME_SA: lade-api
+  # The website's address: allowed Origin, and the base of links in emails.
+  # Change to https://ladehcs.com once the domain points to the website.
+  _SITE_URL: https://lade-website-CHANGE-ME.us-east1.run.app
+  # true while testing with Stripe test keys; false at launch (live keys).
+  _ALLOW_TEST_PAYMENTS: 'true'
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  dynamicSubstitutions: true
+
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args: ['build', '-t', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA', '.']
+
+  - id: push
+    name: gcr.io/cloud-builders/docker
+    args: ['push', '${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA']
+
+  - id: migrate
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        gcloud run jobs deploy ${_JOB} \
+          --region=${_REGION} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA \
+          --service-account=${_RUNTIME_SA}@$PROJECT_ID.iam.gserviceaccount.com \
+          --set-cloudsql-instances=$PROJECT_ID:${_REGION}:${_SQL_INSTANCE} \
+          --set-secrets=DATABASE_URL=lade-database-url:latest \
+          --command=npm \
+          --args=run,db:release \
+          --max-retries=0 \
+          --task-timeout=10m
+        gcloud run jobs execute ${_JOB} --region=${_REGION} --wait
+
+  - id: deploy
+    name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        gcloud run deploy ${_SERVICE} \
+          --region=${_REGION} \
+          --image=${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA \
+          --service-account=${_RUNTIME_SA}@$PROJECT_ID.iam.gserviceaccount.com \
+          --add-cloudsql-instances=$PROJECT_ID:${_REGION}:${_SQL_INSTANCE} \
+          --allow-unauthenticated \
+          --max-instances=1 \
+          --set-env-vars=SITE_URL=${_SITE_URL},ALLOW_TEST_PAYMENTS=${_ALLOW_TEST_PAYMENTS},MAIL_TRANSPORT=ses,MAIL_REPLY_TO=info@ladehcs.com,AWS_REGION=us-east-2,MILEAGE_PROVIDER=aws,PAYMENT_PROVIDER=stripe,ENCRYPTION_ACTIVE_KEY_ID=k1 \
+          --set-secrets=DATABASE_URL=lade-database-url:latest,ENCRYPTION_KEYS=lade-encryption-keys:latest,BLIND_INDEX_KEY=lade-blind-index-key:latest,PROXY_SECRET=lade-proxy-secret:latest,STRIPE_SECRET_KEY=lade-stripe-secret-key:latest,STRIPE_PUBLISHABLE_KEY=lade-stripe-publishable-key:latest,SES_ACCESS_KEY_ID=lade-ses-access-key-id:latest,SES_SECRET_ACCESS_KEY=lade-ses-secret-access-key:latest,AWS_LOCATION_API_KEY=lade-aws-location-api-key:latest
+
+# At launch (live Stripe keys): add the webhook signing secret to the API's
+# secrets above: STRIPE_WEBHOOK_SECRET=lade-stripe-webhook-secret:latest
+
+images:
+  - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_AR_REPO}/${_SERVICE}:$COMMIT_SHA
