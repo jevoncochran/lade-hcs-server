@@ -61,7 +61,7 @@ export const staffInvite = (
   subject: 'Set up your Lade staff account',
   text:
     `You've been invited to join Lade Health Care Services as ${roleName}. ` +
-    `Set up your account here (you'll need your phone to scan a code):\n\n${link}\n\n` +
+    `Set up your account here:\n\n${link}\n\n` +
     `This link works once and expires ${expires}. If you weren't expecting it, you can ignore this email.` +
     signature,
 });
@@ -74,9 +74,8 @@ export const staffSignInReset = (
   to,
   subject: 'Reset your Lade staff sign-in',
   text:
-    `An administrator reset your sign-in. Choose a new password and connect ` +
-    `your phone again here:\n\n${link}\n\n` +
+    `An administrator reset your sign-in. Choose a new password here:\n\n${link}\n\n` +
     `This link works once and expires ${expires}. Until you finish, your old ` +
-    `password and codes still work. If you didn't ask for this, tell an administrator.` +
+    `password still works. If you didn't ask for this, tell an administrator.` +
     signature,
 });

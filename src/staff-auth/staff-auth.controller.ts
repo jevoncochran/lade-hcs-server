@@ -24,7 +24,6 @@ import type { Env } from '../config/env.validation.js';
 import { CompleteInviteDto } from './dto/complete-invite.dto.js';
 import { InviteTokenDto } from './dto/invite-token.dto.js';
 import { StaffLoginDto } from './dto/staff-login.dto.js';
-import { VerifyInviteCodeDto } from './dto/verify-invite-code.dto.js';
 import { CurrentStaff } from './current-staff.decorator.js';
 import { StaffAuthGuard } from './staff-auth.guard.js';
 import { StaffAuthService } from './staff-auth.service.js';
@@ -46,13 +45,6 @@ export class StaffAuthController {
   @AuthRateLimit()
   startInvite(@Body() dto: InviteTokenDto) {
     return this.invites.startAcceptance(dto.token);
-  }
-
-  @Post('invites/accept/verify-code')
-  @HttpCode(HttpStatus.OK)
-  @AuthRateLimit()
-  verifyInviteCode(@Body() dto: VerifyInviteCodeDto) {
-    return this.invites.verifyCode(dto.token, dto.mfaCode);
   }
 
   @Post('invites/accept/complete')
@@ -82,12 +74,7 @@ export class StaffAuthController {
     @ReqMeta() meta: RequestMeta,
     @Res({ passthrough: true }) response: Response,
   ) {
-    const { token } = await this.auth.login(
-      dto.email,
-      dto.password,
-      dto.mfaCode,
-      meta,
-    );
+    const { token } = await this.auth.login(dto.email, dto.password, meta);
     this.setSessionCookie(response, token);
   }
 

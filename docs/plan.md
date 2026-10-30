@@ -35,7 +35,7 @@ Ride data (rider identity + trips to medical appointments, addresses, mobility n
 - Keys (`ENCRYPTION_KEYS`, `ENCRYPTION_ACTIVE_KEY_ID`, `BLIND_INDEX_KEY`) live in Google Secret Manager in production. **Launch requirement:** production keys backed up outside Google Cloud (e.g. a Lade-controlled password manager). Losing them makes all patient data permanently unreadable.
 - PHI never written to logs, error trackers, emails, or Stripe metadata.
 - Append-only `AuditLog` for PHI access, changes, exports and auth events (DB role has INSERT/SELECT only).
-- Staff MFA required, 15-minute idle logout.
+- Staff sign in with email + password (authenticator codes removed 2026-10-30 at Jevon's decision: too much friction with the 15-minute logout), 15-minute idle logout.
 - Dev/staging use seeded fake data only — never real PHI.
 - Soft delete + retention purge job (retention period TBD — see Open items).
 - Jevon needs a BAA with Lade as the developer with system access.
@@ -128,15 +128,15 @@ Customers must create an account to book (decided 2026-10-09). Guest booking may
 ## Staff auth
 
 - Accounts are only created by accepting an invite (48h, one-time link). The first ones come from the bootstrap command: `npm run staff:invite -- --email <email> --role ADMIN`. Later, admins invite from `/admin`.
-- Accepting: scan the authenticator QR code and confirm a 6-digit code first (checked right away), then set name + password. Nobody else ever knows the password or MFA secret.
-- Login: email + password + TOTP code (required). Used codes can't be replayed. 5 failures → 15-minute lock.
+- Accepting: set name + password. Nobody else ever knows the password.
+- Login: email + password. 5 failures → 15-minute lock. (Authenticator codes were required until 2026-10-30; removed to cut friction. If added back, consider "trust this device for 30 days".)
 - Sessions: server-side, httpOnly `lade_staff_sid` cookie (separate from customers); end after 15 minutes idle (HIPAA automatic logoff), 12 hours, or when the account is deactivated.
 - Roles: **DISPATCHER** — view, confirm, cancel, record wait time, mark no-show. **ADMIN** — everything plus staff management, pricing, fee waivers/adjustments, refunds, status corrections. Initial admins: Jevon and the two owners.
-- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/verify-code`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
+- Endpoints: `POST /staff/invites/accept/start`, `/staff/invites/accept/complete`, `/staff/auth/login`, `/staff/auth/logout`; `GET /staff/auth/me`.
 - Staff management (admins only, `AdminGuard` after `StaffAuthGuard`; website `/admin/staff`): `GET /staff/members` (members + pending invite/reset links), `POST /staff/invites` `{ email, role }` (emails the link and returns it), `POST /staff/invites/:id/revoke`, `POST /staff/members/:id/role` `{ role }`, `/deactivate` (ends their sessions and pending reset), `/reactivate`, `/reset-sign-in`. An admin can't act on their own account; there's always one active admin (role/activation changes are serializable transactions, so two admins demoting each other at once can't both succeed). All audited.
 - Live updates: open booking pages (staff list and booking, customer My rides and ride) ask `GET /staff/bookings/changes` or `GET /bookings/changes` every 10 s while visible and reload when the short version string changes (`src/bookings/bookings-version.ts`: counts and last-change times only, no PHI, not audited). These are `@BackgroundCheck()` endpoints: they don't count as session activity, so the 15-minute staff logoff still applies. WebSockets were considered and left for later (an open socket keeps Cloud Run billing ~$25–60/month; the pages wouldn't need rewriting to switch).
 - Database sessions are forced to UTC (`PrismaService`): the Postgres adapter sends and reads times without a zone, so a non-UTC server default (a local Postgres.app was America/Bogota) stored every time shifted. Cloud SQL defaults to UTC anyway.
-- Sign-in reset (forgotten password, lost phone, locked out): a `StaffInvite` with `resetForId`. The setup page, in two steps (phone → password; the name is kept) replaces that account's password and authenticator, clears any lockout and ends all its sessions. Until it's used, the old sign-in still works. Only the newest reset link works.
+- Sign-in reset (forgotten password, locked out): a `StaffInvite` with `resetForId`. The setup page (just a new password; the name is kept) replaces that account's password, clears any lockout and ends all its sessions. Until it's used, the old sign-in still works. Only the newest reset link works.
 - Viewing bookings (dispatchers and admins): `GET /staff/bookings` lists by outbound pickup time (`sort=pickup`, default) or `sort=newest`, filtered by `status` (default: all but `PENDING_PAYMENT`), pickup days `from`/`to` (YYYY-MM-DD in `BUSINESS_TIMEZONE`, inclusive; with no dates and no search, today onward), exact `reference` or exact `riderLastName` (blind index), paged (`page`, `pageSize` ≤ 100). Rows are summaries; `GET /staff/bookings/:id` adds requester, payment, leg progress and status history. Both are `no-store` and every view is audited (`staff.bookings_listed` with the booking ids, `staff.booking_viewed`), without PHI.
 - Actions (`POST /staff/bookings/:id/…`, each returns the updated booking with `actions`: what's allowed right now, from `staff-bookings/booking-actions.ts`):
   - `confirm`: REQUESTED → CONFIRMED.

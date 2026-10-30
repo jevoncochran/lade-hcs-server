@@ -160,8 +160,8 @@ runs when started), against the live database:
    (or `--role DISPATCHER`).
 3. **Execute**, wait for it to finish, open the execution's **Logs**: the
    invite link is printed there (works once, 48 hours).
-4. Send the link privately (text or call). They open it, connect their phone
-   and choose a password.
+4. Send the link privately (text or call). They open it, add their name and
+   choose a password.
 
 After the first admin exists, admins can invite staff from the website
 (`/admin/staff`) instead, which also emails the link.

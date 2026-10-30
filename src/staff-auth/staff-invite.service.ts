@@ -13,25 +13,21 @@ import type { Env } from '../config/env.validation.js';
 import { ActorType, Prisma, StaffRole } from '../generated/prisma/client.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { StaffSessionService } from './staff-session.service.js';
-import { newTotpSecret, totpEnrollment, verifyTotp } from './totp.js';
 
 export const INVITE_TTL_MS = 48 * 60 * 60 * 1000;
 
 const INVALID_INVITE = 'This invite link is invalid or has expired.';
 
 // Staff accounts are only ever created by accepting an invite, so each person
-// sets their own password and MFA and nobody else ever knows them.
+// sets their own password and nobody else ever knows it.
 //
 // Accepting, in the order the setup page shows it:
-//   1. `startAcceptance` generates the MFA secret and QR code
-//   2. `verifyCode` checks a code from the phone right away (codes only last
-//      about 30 seconds) and records that the phone is set up
-//   3. `completeAcceptance` sets name + password and creates the account,
-//      once the phone is verified
+//   1. `startAcceptance` checks the link and returns who it's for
+//   2. `completeAcceptance` sets name + password and creates the account
 //
-// A sign-in reset (forgotten password, lost phone) is an invite tied to an
-// existing account (`resetForId`): the same three steps replace that
-// account's password and authenticator and sign it out everywhere.
+// A sign-in reset (forgotten password) is an invite tied to an existing
+// account (`resetForId`): the same steps replace that account's password and
+// sign it out everywhere.
 @Injectable()
 export class StaffInviteService {
   constructor(
@@ -152,16 +148,9 @@ export class StaffInviteService {
     };
   }
 
-  // Step 1: a fresh MFA secret every time, in case a QR code was lost.
+  // Step 1: who the link is for, so the page can greet them.
   async startAcceptance(token: string) {
     const invite = await this.findUsableInvite(token);
-    const secret = newTotpSecret();
-
-    // A new secret means any earlier verification no longer applies.
-    await this.prisma.staffInvite.update({
-      where: { id: invite.id },
-      data: { mfaSecret: secret, mfaVerifiedAt: null, mfaLastTimeStep: null },
-    });
 
     // A reset keeps the account's name (it can still be changed).
     const existing = invite.resetForId
@@ -176,33 +165,10 @@ export class StaffInviteService {
       name: existing?.name ?? null,
       email: invite.email,
       role: invite.role,
-      ...(await totpEnrollment(secret, invite.email)),
-      secret, // for typing into the app when scanning isn't possible
     };
   }
 
-  // Step 2: proves the phone has the secret.
-  async verifyCode(token: string, mfaCode: string) {
-    const invite = await this.findUsableInvite(token);
-    if (!invite.mfaSecret) {
-      throw new BadRequestException('Set up your authenticator app first.');
-    }
-
-    const timeStep = await verifyTotp(invite.mfaSecret, mfaCode);
-    if (timeStep === null) {
-      throw new BadRequestException(
-        "That code didn't match. Check your authenticator app and try again.",
-      );
-    }
-
-    await this.prisma.staffInvite.update({
-      where: { id: invite.id },
-      data: { mfaVerifiedAt: new Date(), mfaLastTimeStep: timeStep },
-    });
-    return { verified: true };
-  }
-
-  // Step 3: returns a session token; the new staff member is signed in.
+  // Step 2: returns a session token; the new staff member is signed in.
   async completeAcceptance(
     token: string,
     name: string | undefined,
@@ -210,9 +176,6 @@ export class StaffInviteService {
     meta: RequestMeta,
   ) {
     const invite = await this.findUsableInvite(token);
-    if (!invite.mfaSecret || !invite.mfaVerifiedAt) {
-      throw new BadRequestException('Confirm the code from your phone first.');
-    }
     if (!invite.resetForId && !name) {
       throw new BadRequestException('Enter your name.');
     }
@@ -223,24 +186,18 @@ export class StaffInviteService {
       return await this.prisma.$transaction(async (tx) => {
         const claimed = await tx.staffInvite.updateMany({
           where: { id: invite.id, acceptedAt: null, revokedAt: null },
-          data: {
-            acceptedAt: new Date(),
-            mfaSecret: null,
-            mfaVerifiedAt: null,
-          },
+          data: { acceptedAt: new Date() },
         });
         if (claimed.count !== 1) throw new BadRequestException(INVALID_INVITE);
 
         if (invite.resetForId) {
-          // Reset: new password and authenticator, any lockout cleared, and
-          // every existing session (e.g. on a lost phone) ended.
+          // Reset: new password, any lockout cleared, and every existing
+          // session ended.
           const reset = await tx.staffUser.updateMany({
             where: { id: invite.resetForId, isActive: true },
             data: {
               ...(name ? { name } : {}), // a reset keeps the name otherwise
               passwordHash,
-              mfaSecret: invite.mfaSecret,
-              mfaLastTimeStep: invite.mfaLastTimeStep,
               failedLoginCount: 0,
               lockedUntil: null,
               lastLoginAt: new Date(), // finishing signs them in
@@ -273,8 +230,6 @@ export class StaffInviteService {
             name: name!, // checked above: required for a new account
             role: invite.role,
             passwordHash,
-            mfaSecret: invite.mfaSecret,
-            mfaLastTimeStep: invite.mfaLastTimeStep,
             lastLoginAt: new Date(), // finishing signs them in
           },
           select: { id: true },

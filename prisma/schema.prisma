@@ -367,8 +367,6 @@ model StaffUser {
   passwordHash     String // argon2id
   role             StaffRole @default(DISPATCHER)
   isActive         Boolean   @default(true)
-  mfaSecret        String? /// @encrypted  TOTP secret (set when the invite is accepted)
-  mfaLastTimeStep  Int? // last accepted TOTP step, so a code can't be reused
   failedLoginCount Int       @default(0)
   lockedUntil      DateTime? @db.Timestamptz(6)
   lastLoginAt      DateTime? @db.Timestamptz(6)
@@ -399,28 +397,22 @@ model StaffSession {
   @@index([staffUserId])
 }
 
-// One-time 48-hour link for a new staff member to set a password and MFA.
+// One-time 48-hour link for a new staff member to set their password.
 model StaffInvite {
-  id              String     @id @default(uuid()) @db.Uuid
-  email           String
-  role            StaffRole  @default(DISPATCHER)
-  tokenHash       String     @unique
-  expiresAt       DateTime   @db.Timestamptz(6)
-  acceptedAt      DateTime?  @db.Timestamptz(6)
-  revokedAt       DateTime?  @db.Timestamptz(6)
-  mfaSecret       String? /// @encrypted  generated while accepting, before the account exists
-  // Set once a code from the phone matched (the first step of accepting), so
-  // the account can be finished without a fresh code.
-  mfaVerifiedAt   DateTime?  @db.Timestamptz(6)
-  mfaLastTimeStep Int? // the matched code's step, so it can't be reused to sign in
-  invitedById     String?    @db.Uuid // null when created by the bootstrap script
-  invitedBy       StaffUser? @relation("InvitedBy", fields: [invitedById], references: [id])
-  // Set for a sign-in reset (forgotten password or lost phone): accepting
-  // gives this existing account a new password and authenticator instead
-  // of creating one.
-  resetForId      String?    @db.Uuid
-  resetFor        StaffUser? @relation("SignInReset", fields: [resetForId], references: [id], onDelete: Restrict)
-  createdAt       DateTime   @default(now()) @db.Timestamptz(6)
+  id          String     @id @default(uuid()) @db.Uuid
+  email       String
+  role        StaffRole  @default(DISPATCHER)
+  tokenHash   String     @unique
+  expiresAt   DateTime   @db.Timestamptz(6)
+  acceptedAt  DateTime?  @db.Timestamptz(6)
+  revokedAt   DateTime?  @db.Timestamptz(6)
+  invitedById String?    @db.Uuid // null when created by the bootstrap script
+  invitedBy   StaffUser? @relation("InvitedBy", fields: [invitedById], references: [id])
+  // Set for a sign-in reset (forgotten password): accepting gives this
+  // existing account a new password instead of creating one.
+  resetForId  String?    @db.Uuid
+  resetFor    StaffUser? @relation("SignInReset", fields: [resetForId], references: [id], onDelete: Restrict)
+  createdAt   DateTime   @default(now()) @db.Timestamptz(6)
 
   @@index([email])
   @@index([resetForId])

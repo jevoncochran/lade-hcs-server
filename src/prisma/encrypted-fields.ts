@@ -21,8 +21,6 @@ export const ENCRYPTED_FIELDS: Partial<Record<ModelName, readonly string[]>> = {
   BookingCharge: ['note'],
   BookingEvent: ['note'],
   Customer: ['email', 'firstName', 'lastName', 'phone'],
-  StaffUser: ['mfaSecret'],
-  StaffInvite: ['mfaSecret'],
 };
 
 // Search hashes the encryption extension derives from a plaintext field
