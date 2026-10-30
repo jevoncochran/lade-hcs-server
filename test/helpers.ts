@@ -1,7 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
-import { generate } from 'otplib';
 import request, { type Test as Request } from 'supertest';
 import type { App } from 'supertest/types.js';
 import { configureApp } from '../src/app.setup.js';
@@ -153,15 +152,9 @@ export const signedInStaff = async (
   const token = new URL(link).searchParams.get('token')!;
   const client = browser(app);
 
-  const start = await step(
+  await step(
     'staff invite start',
     client.post('/staff/invites/accept/start', { token }),
-    200,
-  );
-  const mfaCode = await generate({ secret: start.body.secret });
-  await step(
-    `staff invite code ${mfaCode}`,
-    client.post('/staff/invites/accept/verify-code', { token, mfaCode }),
     200,
   );
   await step(

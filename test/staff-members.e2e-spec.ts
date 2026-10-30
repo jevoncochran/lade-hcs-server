@@ -1,5 +1,4 @@
 import type { INestApplication } from '@nestjs/common';
-import { generate } from 'otplib';
 import type { App } from 'supertest/types.js';
 import { AppModule } from '../src/app.module.js';
 import { StaffRole } from '../src/generated/prisma/client.js';
@@ -15,11 +14,7 @@ import {
 } from './helpers.js';
 
 const PASSWORD = 'staff passphrase 123';
-
-// A code from `offset` 30-second steps ahead: each sign-in needs a newer
-// step than the last one used (replay protection).
-const codeFor = (secret: string, offset = 0) =>
-  generate({ secret, epoch: Math.floor(Date.now() / 1000) + offset * 30 });
+const NEW_PASSWORD = 'a different passphrase 456';
 
 const tokenOf = (link: string) => new URL(link).searchParams.get('token')!;
 
@@ -31,7 +26,11 @@ describe('Staff management (e2e)', () => {
   let adminId: string;
 
   // Goes through the setup page's steps with an invite or reset link.
-  const accept = async (link: string, name = 'New Person') => {
+  const accept = async (
+    link: string,
+    name = 'New Person',
+    password = PASSWORD,
+  ) => {
     const token = tokenOf(link);
     const client = browser(app);
     const start = await step(
@@ -39,25 +38,12 @@ describe('Staff management (e2e)', () => {
       client.post('/staff/invites/accept/start', { token }),
       200,
     );
-    const secret: string = start.body.secret;
-    await step(
-      'verify',
-      client.post('/staff/invites/accept/verify-code', {
-        token,
-        mfaCode: await codeFor(secret),
-      }),
-      200,
-    );
     await step(
       'complete',
-      client.post('/staff/invites/accept/complete', {
-        token,
-        name,
-        password: PASSWORD,
-      }),
+      client.post('/staff/invites/accept/complete', { token, name, password }),
       204,
     );
-    return { client, secret, start: start.body };
+    return { client, start: start.body };
   };
 
   // A new staff member, invited by the admin through the API.
@@ -252,11 +238,7 @@ describe('Staff management (e2e)', () => {
       // Old sessions stay ended; they sign in again.
       await person.client.get('/staff/auth/me').expect(401);
       await browser(app)
-        .post('/staff/auth/login', {
-          email: person.email,
-          password: PASSWORD,
-          mfaCode: await codeFor(person.secret, 1),
-        })
+        .post('/staff/auth/login', { email: person.email, password: PASSWORD })
         .expect(204);
     });
 
@@ -266,7 +248,7 @@ describe('Staff management (e2e)', () => {
   });
 
   describe('resetting a sign-in', () => {
-    it('gives a new password and phone code, and ends old sessions', async () => {
+    it('gives a new password and ends old sessions', async () => {
       const person = await member();
       const { body } = await admin
         .post(`/staff/members/${person.id}/reset-sign-in`)
@@ -282,29 +264,23 @@ describe('Staff management (e2e)', () => {
       // Until it's used, the old sign-in still works.
       await person.client.get('/staff/auth/me').expect(200);
 
-      const reset = await accept(body.link, 'Renamed Person');
+      const reset = await accept(body.link, 'Renamed Person', NEW_PASSWORD);
       expect(reset.start).toMatchObject({
         kind: 'reset',
         name: 'New Person',
         email: person.email,
       });
-      expect(reset.secret).not.toBe(person.secret);
       await person.client.get('/staff/auth/me').expect(401);
       await reset.client.get('/staff/auth/me').expect(200);
 
-      // The old phone code no longer works; the new one does.
+      // The old password no longer works; the new one does.
       await browser(app)
-        .post('/staff/auth/login', {
-          email: person.email,
-          password: PASSWORD,
-          mfaCode: await codeFor(person.secret, 1),
-        })
+        .post('/staff/auth/login', { email: person.email, password: PASSWORD })
         .expect(401);
       await browser(app)
         .post('/staff/auth/login', {
           email: person.email,
-          password: PASSWORD,
-          mfaCode: await codeFor(reset.secret, 1),
+          password: NEW_PASSWORD,
         })
         .expect(204);
 
@@ -323,16 +299,8 @@ describe('Staff management (e2e)', () => {
       expect(body.link).toMatch(/&reset=1$/);
       const token = tokenOf(body.link);
       const client = browser(app);
-      const start = await client
-        .post('/staff/invites/accept/start', { token })
-        .expect(200);
-      await client
-        .post('/staff/invites/accept/verify-code', {
-          token,
-          mfaCode: await codeFor(start.body.secret),
-        })
-        .expect(200);
-      // Phone, then password: no name.
+      await client.post('/staff/invites/accept/start', { token }).expect(200);
+      // Just the password: no name.
       await client
         .post('/staff/invites/accept/complete', { token, password: PASSWORD })
         .expect(204);
@@ -348,15 +316,7 @@ describe('Staff management (e2e)', () => {
         .expect(201);
       const token = tokenOf(body.link);
       const client = browser(app);
-      const start = await client
-        .post('/staff/invites/accept/start', { token })
-        .expect(200);
-      await client
-        .post('/staff/invites/accept/verify-code', {
-          token,
-          mfaCode: await codeFor(start.body.secret),
-        })
-        .expect(200);
+      await client.post('/staff/invites/accept/start', { token }).expect(200);
       const refused = await client
         .post('/staff/invites/accept/complete', { token, password: PASSWORD })
         .expect(400);

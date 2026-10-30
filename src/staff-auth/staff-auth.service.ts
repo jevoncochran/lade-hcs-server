@@ -13,12 +13,11 @@ import {
   StaffSessionService,
   type SessionStaff,
 } from './staff-session.service.js';
-import { verifyTotp } from './totp.js';
 
-// One message for every failure (unknown email, wrong password, wrong code,
-// locked), so the response never reveals which part was right.
+// One message for every failure (unknown email, wrong password, locked), so
+// the response never reveals which part was right.
 export const STAFF_LOGIN_FAILED_MESSAGE =
-  'Incorrect email, password or code. After 5 failed attempts, sign-in is paused for 15 minutes.';
+  'Incorrect email or password. After 5 failed attempts, sign-in is paused for 15 minutes.';
 
 @Injectable()
 export class StaffAuthService {
@@ -28,20 +27,13 @@ export class StaffAuthService {
     private readonly audit: AuditService,
   ) {}
 
-  async login(
-    rawEmail: string,
-    password: string,
-    mfaCode: string,
-    meta: RequestMeta,
-  ) {
+  async login(rawEmail: string, password: string, meta: RequestMeta) {
     const staff = await this.prisma.staffUser.findUnique({
       where: { email: rawEmail.trim().toLowerCase() },
       select: {
         id: true,
         isActive: true,
         passwordHash: true,
-        mfaSecret: true,
-        mfaLastTimeStep: true,
         failedLoginCount: true,
         lockedUntil: true,
       },
@@ -54,33 +46,25 @@ export class StaffAuthService {
     }
 
     const passwordOk = await verifyPassword(staff.passwordHash, password);
-    const timeStep =
-      passwordOk && staff.mfaSecret
-        ? await verifyTotp(staff.mfaSecret, mfaCode, staff.mfaLastTimeStep)
-        : null;
 
     if (isLocked(staff)) {
       await this.recordFailedLogin(staff.id, 'locked', meta);
       throw new UnauthorizedException(STAFF_LOGIN_FAILED_MESSAGE);
     }
 
-    if (!passwordOk || timeStep === null) {
+    if (!passwordOk) {
       await this.prisma.staffUser.update({
         where: { id: staff.id },
         data: afterFailedLogin(staff),
       });
-      await this.recordFailedLogin(
-        staff.id,
-        passwordOk ? 'bad_mfa_code' : 'bad_password',
-        meta,
-      );
+      await this.recordFailedLogin(staff.id, 'bad_password', meta);
       throw new UnauthorizedException(STAFF_LOGIN_FAILED_MESSAGE);
     }
 
     const token = await this.prisma.$transaction(async (tx) => {
       await tx.staffUser.update({
         where: { id: staff.id },
-        data: { ...afterSuccessfulLogin(), mfaLastTimeStep: timeStep },
+        data: afterSuccessfulLogin(),
       });
       await this.audit.record(
         {

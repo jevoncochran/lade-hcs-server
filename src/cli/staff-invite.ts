@@ -10,8 +10,7 @@ import { StaffInviteService } from '../staff-auth/staff-invite.service.js';
 //   npm run staff:invite -- --email owner@ladehcs.com --role ADMIN
 //
 // Send the link privately (text or call). It works once and expires in 48
-// hours; the person sets their own password and MFA, so nobody else ever
-// knows their credentials. Runs against the database in DATABASE_URL.
+// hours; the person sets their own password, so nobody else ever knows it. Runs against the database in DATABASE_URL.
 const main = async () => {
   const { values } = parseArgs({
     options: {
